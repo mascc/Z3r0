@@ -1,4 +1,5 @@
 import { apiRequest } from "./client";
+import { buildQuery } from "./query";
 import type {
   CreateSystemUserRequest,
   CreateSystemUserResponse,
@@ -13,17 +14,6 @@ import type {
 } from "./types";
 
 const SYSTEM_USERS_PATH = "/api/system-users";
-
-function buildQuery(params: QuerySystemUsersParams) {
-  const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      searchParams.set(key, String(value));
-    }
-  });
-  const query = searchParams.toString();
-  return query ? `?${query}` : "";
-}
 
 export function login(payload: LoginRequest) {
   return apiRequest<LoginResponse>(`${SYSTEM_USERS_PATH}/login`, {

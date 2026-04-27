@@ -3,13 +3,14 @@ from sqlmodel import SQLModel
 
 from config import get_config
 from logger import get_logger
+from model.sandbox_image_model import SandboxImage
 from model.system_user_model import SystemUser
 
 
 logger = get_logger(__name__)
 
 # import table=True models so SQLModel.metadata knows about every table.
-_registered_models = [SystemUser]
+_registered_models = [SystemUser, SandboxImage]
 
 # async postgres engine instance
 _engine: AsyncEngine | None = None

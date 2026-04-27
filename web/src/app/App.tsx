@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "rea
 import { AuthProvider, useAuth } from "../shared/auth/AuthProvider";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { LoginPage } from "../features/auth/LoginPage";
+import { SandboxImagesPage } from "../features/sandbox-images/SandboxImagesPage";
 import { SystemUsersPage } from "../features/system-users/SystemUsersPage";
 
 function ProtectedRoute() {
@@ -36,6 +37,7 @@ export function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<AdminLayout />}>
               <Route index element={<Navigate to="/system-users" replace />} />
+              <Route path="/sandbox-images" element={<SandboxImagesPage />} />
               <Route path="/system-users" element={<SystemUsersPage />} />
             </Route>
           </Route>

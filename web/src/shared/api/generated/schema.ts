@@ -4,6 +4,90 @@
  */
 
 export interface paths {
+    "/api/sandbox-images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query Sandbox Images Route
+         * @description query sandbox images
+         */
+        get: operations["query_sandbox_images_route_api_sandbox_images_get"];
+        put?: never;
+        /**
+         * Create Sandbox Image Handler
+         * @description create sandbox image
+         */
+        post: operations["create_sandbox_image_handler_api_sandbox_images_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sandbox-images/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Sandbox Image Handler
+         * @description delete sandbox image
+         */
+        delete: operations["delete_sandbox_image_handler_api_sandbox_images__id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sandbox-images/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Sandbox Image Pull Handler
+         * @description cancel active sandbox image pull
+         */
+        post: operations["cancel_sandbox_image_pull_handler_api_sandbox_images__id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sandbox-images/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Sandbox Image Handler
+         * @description retry failed sandbox image pull
+         */
+        post: operations["retry_sandbox_image_handler_api_sandbox_images__id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system-users": {
         parameters: {
             query?: never;
@@ -106,6 +190,20 @@ export interface components {
              */
             message: string;
         };
+        /** CommonResponse[DeleteSandboxImageResponse] */
+        CommonResponse_DeleteSandboxImageResponse_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            data?: components["schemas"]["DeleteSandboxImageResponse"] | null;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+        };
         /** CommonResponse[DeleteSystemUserResponse] */
         CommonResponse_DeleteSystemUserResponse_: {
             /**
@@ -120,6 +218,20 @@ export interface components {
              */
             message: string;
         };
+        /** CommonResponse[QuerySandboxImagesResponse] */
+        CommonResponse_QuerySandboxImagesResponse_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            data?: components["schemas"]["QuerySandboxImagesResponse"] | null;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+        };
         /** CommonResponse[QuerySystemUsersResponse] */
         CommonResponse_QuerySystemUsersResponse_: {
             /**
@@ -128,6 +240,20 @@ export interface components {
              */
             code: number;
             data?: components["schemas"]["QuerySystemUsersResponse"] | null;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+        };
+        /** CommonResponse[SandboxImageSchema] */
+        CommonResponse_SandboxImageSchema_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            data?: components["schemas"]["SandboxImageSchema"] | null;
             /**
              * Message
              * @default success
@@ -162,6 +288,11 @@ export interface components {
              */
             message: string;
         };
+        /** CreateSandboxImageRequest */
+        CreateSandboxImageRequest: {
+            /** Image Name */
+            image_name: string;
+        };
         /** CreateSystemUserRequest */
         CreateSystemUserRequest: {
             /**
@@ -176,12 +307,28 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** DeleteSandboxImageResponse */
+        DeleteSandboxImageResponse: {
+            /** Deleted */
+            deleted: boolean;
+            /** Id */
+            id: number;
+        };
         /** DeleteSystemUserResponse */
         DeleteSystemUserResponse: {
             /** Deleted */
             deleted: boolean;
             /** Id */
             id: number;
+        };
+        /** QuerySandboxImagesResponse */
+        QuerySandboxImagesResponse: {
+            /** Items */
+            items: components["schemas"]["SandboxImageSchema"][];
+            /** Page */
+            page: number;
+            /** Size */
+            size: number;
         };
         /** QuerySystemUsersResponse */
         QuerySystemUsersResponse: {
@@ -192,6 +339,33 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** SandboxImageSchema */
+        SandboxImageSchema: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Image Hash */
+            image_hash: string;
+            /** Image Name */
+            image_name: string;
+            /** Image Size */
+            image_size: number;
+            status: components["schemas"]["SandboxImageStatusSchema"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * SandboxImageStatusSchema
+         * @enum {string}
+         */
+        SandboxImageStatusSchema: "pulling" | "ready" | "failed" | "canceled";
         /** SystemUserLoginRequest */
         SystemUserLoginRequest: {
             /** Email */
@@ -248,6 +422,309 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    query_sandbox_images_route_api_sandbox_images_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+                keyword?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_QuerySandboxImagesResponse_"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    create_sandbox_image_handler_api_sandbox_images_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSandboxImageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_SandboxImageSchema_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    delete_sandbox_image_handler_api_sandbox_images__id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_DeleteSandboxImageResponse_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Sandbox image not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    cancel_sandbox_image_pull_handler_api_sandbox_images__id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_SandboxImageSchema_"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Sandbox image not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    retry_sandbox_image_handler_api_sandbox_images__id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_SandboxImageSchema_"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Sandbox image not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
     query_system_users_route_api_system_users_get: {
         parameters: {
             query?: {

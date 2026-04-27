@@ -18,7 +18,7 @@ def export_openapi_schema() -> Path:
     app = create_app()
     schema = app.openapi()
     _patch_auth_contracts(app, schema)
-    _patch_system_user_contracts(schema)
+    _patch_list_query_contracts(schema)
     _patch_validation_contracts(schema)
     _patch_error_contracts(schema)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -97,25 +97,27 @@ def _patch_error_contracts(schema: dict[str, Any]) -> None:
                     _ensure_common_response(response, description)
 
 
-def _patch_system_user_contracts(schema: dict[str, Any]) -> None:
-    """document handler-level user API constraints that FastAPI cannot infer"""
-    operation = schema.get("paths", {}).get("/api/system-users", {}).get("get")
-    if not isinstance(operation, dict):
-        return
-
-    for parameter in operation.get("parameters", []):
-        if not isinstance(parameter, dict):
+def _patch_list_query_contracts(schema: dict[str, Any]) -> None:
+    """document handler-level list query constraints that FastAPI cannot infer"""
+    list_paths = ("/api/system-users", "/api/sandbox-images")
+    for path in list_paths:
+        operation = schema.get("paths", {}).get(path, {}).get("get")
+        if not isinstance(operation, dict):
             continue
-        parameter_schema = parameter.get("schema")
-        if not isinstance(parameter_schema, dict):
-            continue
-        if parameter.get("name") == "page":
-            parameter_schema["minimum"] = 1
-        if parameter.get("name") == "size":
-            parameter_schema["minimum"] = 1
-            parameter_schema["maximum"] = 100
 
-    operation.setdefault("responses", {})["400"] = _common_response_ref("Bad Request")
+        for parameter in operation.get("parameters", []):
+            if not isinstance(parameter, dict):
+                continue
+            parameter_schema = parameter.get("schema")
+            if not isinstance(parameter_schema, dict):
+                continue
+            if parameter.get("name") == "page":
+                parameter_schema["minimum"] = 1
+            if parameter.get("name") == "size":
+                parameter_schema["minimum"] = 1
+                parameter_schema["maximum"] = 100
+
+        operation.setdefault("responses", {})["400"] = _common_response_ref("Bad Request")
 
 
 def _common_response_ref(description: str) -> dict[str, Any]:

@@ -17,6 +17,7 @@ from middleware.response import (
     request_validation_exception_handler,
 )
 from model.system_user_model import SystemUserRole
+from router.sandbox_image_router import router as sandbox_image_router
 from router.system_user_router import router as system_user_router
 from schema.response_schema import CommonResponse
 from service.system_user_service import create_system_user, query_system_users
@@ -106,9 +107,9 @@ def create_app() -> FastAPI:
     logger.info("middleware added")
     
     app.include_router(system_user_router, prefix=API_PREFIX)
+    app.include_router(sandbox_image_router, prefix=API_PREFIX)
     logger.info("api router added")
 
     _mount_api_not_found(app)
     _mount_frontend(app)
     return app
-

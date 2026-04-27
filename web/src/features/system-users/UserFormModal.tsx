@@ -105,7 +105,7 @@ export function UserFormModal({ open, mode, user, saving, onCancel, onSubmit }: 
       width={520}
       maskClosable={!saving}
     >
-      <form className="user-form" onSubmit={handleSubmit}>
+      <form className="resource-form" onSubmit={handleSubmit}>
         <label>
           <span>Username</span>
           <Input

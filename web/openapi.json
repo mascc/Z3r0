@@ -45,6 +45,32 @@
         "title": "CommonResponse[Any]",
         "type": "object"
       },
+      "CommonResponse_DeleteSandboxImageResponse_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeleteSandboxImageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "CommonResponse[DeleteSandboxImageResponse]",
+        "type": "object"
+      },
       "CommonResponse_DeleteSystemUserResponse_": {
         "properties": {
           "code": {
@@ -71,6 +97,32 @@
         "title": "CommonResponse[DeleteSystemUserResponse]",
         "type": "object"
       },
+      "CommonResponse_QuerySandboxImagesResponse_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuerySandboxImagesResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "CommonResponse[QuerySandboxImagesResponse]",
+        "type": "object"
+      },
       "CommonResponse_QuerySystemUsersResponse_": {
         "properties": {
           "code": {
@@ -95,6 +147,32 @@
           }
         },
         "title": "CommonResponse[QuerySystemUsersResponse]",
+        "type": "object"
+      },
+      "CommonResponse_SandboxImageSchema_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SandboxImageSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "CommonResponse[SandboxImageSchema]",
         "type": "object"
       },
       "CommonResponse_SystemUserLoginResponse_": {
@@ -149,6 +227,21 @@
         "title": "CommonResponse[SystemUserSchema]",
         "type": "object"
       },
+      "CreateSandboxImageRequest": {
+        "properties": {
+          "image_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Image Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image_name"
+        ],
+        "title": "CreateSandboxImageRequest",
+        "type": "object"
+      },
       "CreateSystemUserRequest": {
         "properties": {
           "email": {
@@ -181,6 +274,24 @@
         "title": "CreateSystemUserRequest",
         "type": "object"
       },
+      "DeleteSandboxImageResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "title": "DeleteSandboxImageResponse",
+        "type": "object"
+      },
       "DeleteSystemUserResponse": {
         "properties": {
           "deleted": {
@@ -197,6 +308,32 @@
           "deleted"
         ],
         "title": "DeleteSystemUserResponse",
+        "type": "object"
+      },
+      "QuerySandboxImagesResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SandboxImageSchema"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page",
+          "size",
+          "items"
+        ],
+        "title": "QuerySandboxImagesResponse",
         "type": "object"
       },
       "QuerySystemUsersResponse": {
@@ -224,6 +361,60 @@
         ],
         "title": "QuerySystemUsersResponse",
         "type": "object"
+      },
+      "SandboxImageSchema": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_hash": {
+            "title": "Image Hash",
+            "type": "string"
+          },
+          "image_name": {
+            "title": "Image Name",
+            "type": "string"
+          },
+          "image_size": {
+            "title": "Image Size",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SandboxImageStatusSchema"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "image_name",
+          "image_size",
+          "image_hash",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SandboxImageSchema",
+        "type": "object"
+      },
+      "SandboxImageStatusSchema": {
+        "enum": [
+          "pulling",
+          "ready",
+          "failed",
+          "canceled"
+        ],
+        "title": "SandboxImageStatusSchema",
+        "type": "string"
       },
       "SystemUserLoginRequest": {
         "properties": {
@@ -376,6 +567,427 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/sandbox-images": {
+      "get": {
+        "description": "query sandbox images",
+        "operationId": "query_sandbox_images_route_api_sandbox_images_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "keyword",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Keyword",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_QuerySandboxImagesResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Query Sandbox Images Route",
+        "tags": [
+          "sandbox-images"
+        ]
+      },
+      "post": {
+        "description": "create sandbox image",
+        "operationId": "create_sandbox_image_handler_api_sandbox_images_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxImageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_SandboxImageSchema_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create Sandbox Image Handler",
+        "tags": [
+          "sandbox-images"
+        ]
+      }
+    },
+    "/api/sandbox-images/{id}": {
+      "delete": {
+        "description": "delete sandbox image",
+        "operationId": "delete_sandbox_image_handler_api_sandbox_images__id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_DeleteSandboxImageResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Sandbox image not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete Sandbox Image Handler",
+        "tags": [
+          "sandbox-images"
+        ]
+      }
+    },
+    "/api/sandbox-images/{id}/cancel": {
+      "post": {
+        "description": "cancel active sandbox image pull",
+        "operationId": "cancel_sandbox_image_pull_handler_api_sandbox_images__id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_SandboxImageSchema_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Sandbox image not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Cancel Sandbox Image Pull Handler",
+        "tags": [
+          "sandbox-images"
+        ]
+      }
+    },
+    "/api/sandbox-images/{id}/retry": {
+      "post": {
+        "description": "retry failed sandbox image pull",
+        "operationId": "retry_sandbox_image_handler_api_sandbox_images__id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_SandboxImageSchema_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Sandbox image not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Retry Sandbox Image Handler",
+        "tags": [
+          "sandbox-images"
+        ]
+      }
+    },
     "/api/system-users": {
       "get": {
         "description": "query system users",
