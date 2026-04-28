@@ -7,9 +7,8 @@ import docker
 from docker.utils import parse_repository_tag
 from sqlalchemy import String, cast, or_
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
-from database import get_engine
+from database import get_async_session
 from logger import get_logger
 from model.sandbox_image_model import SandboxImage, SandboxImageStatus
 
@@ -25,10 +24,6 @@ class PullJob:
 
 
 _pull_jobs: dict[int, PullJob] = {}
-
-
-def _session() -> AsyncSession:
-    return AsyncSession(get_engine())
 
 
 def _hash_value(value: str) -> str:
@@ -71,7 +66,7 @@ async def _save_pull_result(
     image_hash: str = "",
     image_size: int = 0,
 ) -> None:
-    async with _session() as session:
+    async with get_async_session() as session:
         sandbox_image = await session.get(SandboxImage, id)
         if sandbox_image is None or sandbox_image.image_name != image_name:
             logger.info("sandbox image pull result ignored: %s", id)
@@ -172,7 +167,7 @@ async def create_sandbox_image(image_name: str) -> SandboxImage:
         updated_at=now,
     )
 
-    async with _session() as session:
+    async with get_async_session() as session:
         session.add(sandbox_image)
         await session.commit()
         await session.refresh(sandbox_image)
@@ -187,7 +182,7 @@ async def create_sandbox_image(image_name: str) -> SandboxImage:
 
 async def cancel_sandbox_image_pull(id: int) -> tuple[SandboxImage | None, bool]:
     """cancel an active sandbox image pull"""
-    async with _session() as session:
+    async with get_async_session() as session:
         sandbox_image = await session.get(SandboxImage, id)
         if sandbox_image is None:
             return None, False
@@ -214,7 +209,7 @@ async def delete_sandbox_image(id: int) -> bool:
     if job is not None:
         _cancel_pull_job(job)
 
-    async with _session() as session:
+    async with get_async_session() as session:
         sandbox_image = await session.get(SandboxImage, id)
         if sandbox_image is None:
             return False
@@ -230,7 +225,7 @@ async def delete_sandbox_image(id: int) -> bool:
 
 async def retry_sandbox_image(id: int) -> tuple[SandboxImage | None, bool]:
     """retry a failed or canceled sandbox image pull"""
-    async with _session() as session:
+    async with get_async_session() as session:
         sandbox_image = await session.get(SandboxImage, id)
         if sandbox_image is None:
             return None, False
@@ -265,6 +260,6 @@ async def query_sandbox_images(page: int = 1, size: int = 100, keyword: str = ""
             )
         )
 
-    async with _session() as session:
+    async with get_async_session() as session:
         result = await session.exec(statement)
         return list(result.all())

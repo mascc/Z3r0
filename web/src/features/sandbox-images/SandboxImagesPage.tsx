@@ -1,4 +1,5 @@
 import { Button, Popconfirm, Tag, Tooltip } from "@douyinfe/semi-ui";
+import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag";
 import { Ban, Boxes, Fingerprint, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cancelSandboxImage, createSandboxImage, deleteSandboxImage, querySandboxImages, retrySandboxImage } from "../../shared/api/sandboxImages";
@@ -7,22 +8,17 @@ import type { CreateSandboxImageRequest, SandboxImage, SandboxImageStatus } from
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
 import { ResourcePageShell } from "../../shared/components/ResourcePageShell";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
+import { useResourceAction } from "../../shared/hooks/useResourceAction";
 import { formatDateTime } from "../../shared/lib/date";
 import { formatBytes } from "../../shared/lib/number";
 import { SandboxImageFormModal } from "./SandboxImageFormModal";
 
 const DEFAULT_PAGE_SIZE = 10;
-const statusColorMap = { pulling: "amber", ready: "green", failed: "red", canceled: "grey" } satisfies Record<SandboxImageStatus, "amber" | "green" | "red" | "grey">;
-
-type ModalState = { open: boolean };
-
-function formatImageHash(imageHash: string) {
-  return imageHash ? imageHash.slice(0, 12) : "Pending inspect";
-}
+const statusColorMap: Record<SandboxImageStatus, TagColor> = { pulling: "amber", ready: "green", failed: "red", canceled: "grey" };
 
 function renderImageHash(imageHash: string) {
-  const content = <>{formatImageHash(imageHash)}</>;
-  return imageHash ? <Tooltip content={imageHash}>{content}</Tooltip> : content;
+  if (!imageHash) return <>Pending inspect</>;
+  return <Tooltip content={imageHash}>{imageHash.slice(0, 12)}</Tooltip>;
 }
 
 export function SandboxImagesPage() {
@@ -40,17 +36,27 @@ export function SandboxImagesPage() {
     canGoNext,
   } = usePagedResourceList<SandboxImage>({ pageSize: DEFAULT_PAGE_SIZE, query: querySandboxImages });
   const [saving, setSaving] = useState(false);
-  const [cancelingImageId, setCancelingImageId] = useState<number | null>(null);
-  const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
-  const [retryingImageId, setRetryingImageId] = useState<number | null>(null);
-  const [modalState, setModalState] = useState<ModalState>({ open: false });
+  const [modalOpen, setModalOpen] = useState(false);
   const setHeaderActions = useAdminHeaderActions();
+
+  const { run: cancelImage, busyId: cancelingId } = useResourceAction<SandboxImage>(
+    (image) => cancelSandboxImage(image.id),
+    loadImages,
+  );
+  const { run: retryImage, busyId: retryingId } = useResourceAction<SandboxImage>(
+    (image) => retrySandboxImage(image.id),
+    loadImages,
+  );
+  const { run: deleteImage, busyId: deletingId } = useResourceAction<SandboxImage>(
+    (image) => deleteSandboxImage(image.id),
+    loadImages,
+  );
 
   useEffect(() => {
     setHeaderActions(
       <>
         <Button icon={<RefreshCw size={16} />} onClick={() => void loadImages()} loading={loading} aria-label="Refresh sandbox images" />
-        <Button icon={<Plus size={16} />} theme="solid" type="danger" onClick={() => setModalState({ open: true })}>
+        <Button icon={<Plus size={16} />} theme="solid" type="danger" onClick={() => setModalOpen(true)}>
           Create Image
         </Button>
       </>,
@@ -75,63 +81,12 @@ export function SandboxImagesPage() {
     try {
       const response = await createSandboxImage(payload);
       showApiSuccess(response);
-      setModalState({ open: false });
+      setModalOpen(false);
       await loadImages();
     } catch (error) {
       showApiError(error);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleCancel = async (image: SandboxImage) => {
-    if (cancelingImageId !== null) {
-      return;
-    }
-
-    setCancelingImageId(image.id);
-    try {
-      const response = await cancelSandboxImage(image.id);
-      showApiSuccess(response);
-      await loadImages();
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setCancelingImageId(null);
-    }
-  };
-
-  const handleRetry = async (image: SandboxImage) => {
-    if (retryingImageId !== null) {
-      return;
-    }
-
-    setRetryingImageId(image.id);
-    try {
-      const response = await retrySandboxImage(image.id);
-      showApiSuccess(response);
-      await loadImages();
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setRetryingImageId(null);
-    }
-  };
-
-  const handleDelete = async (image: SandboxImage) => {
-    if (deletingImageId !== null) {
-      return;
-    }
-
-    setDeletingImageId(image.id);
-    try {
-      const response = await deleteSandboxImage(image.id);
-      showApiSuccess(response);
-      await loadImages();
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setDeletingImageId(null);
     }
   };
 
@@ -185,24 +140,24 @@ export function SandboxImagesPage() {
                   icon={<Ban size={15} />}
                   theme="borderless"
                   disabled={image.status !== "pulling"}
-                  loading={cancelingImageId === image.id}
+                  loading={cancelingId === image.id}
                   aria-label={`Cancel ${image.image_name}`}
-                  onClick={() => void handleCancel(image)}
+                  onClick={() => void cancelImage(image)}
                 />
                 <Button
                   icon={<RotateCcw size={15} />}
                   theme="borderless"
                   disabled={image.status !== "failed" && image.status !== "canceled"}
-                  loading={retryingImageId === image.id}
+                  loading={retryingId === image.id}
                   aria-label={`Retry ${image.image_name}`}
-                  onClick={() => void handleRetry(image)}
+                  onClick={() => void retryImage(image)}
                 />
-                <Popconfirm title="Delete image" content={`Delete ${image.image_name}?`} okType="danger" onConfirm={() => void handleDelete(image)}>
+                <Popconfirm title="Delete image" content={`Delete ${image.image_name}?`} okType="danger" onConfirm={() => void deleteImage(image)}>
                   <Button
                     icon={<Trash2 size={15} />}
                     theme="borderless"
                     type="danger"
-                    loading={deletingImageId === image.id}
+                    loading={deletingId === image.id}
                     aria-label={`Delete ${image.image_name}`}
                   />
                 </Popconfirm>
@@ -213,9 +168,9 @@ export function SandboxImagesPage() {
       </ResourcePageShell>
 
       <SandboxImageFormModal
-        open={modalState.open}
+        open={modalOpen}
         saving={saving}
-        onCancel={() => setModalState({ open: false })}
+        onCancel={() => setModalOpen(false)}
         onSubmit={handleCreate}
       />
     </>

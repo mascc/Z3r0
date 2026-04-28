@@ -10,5 +10,15 @@
         "database": "z3r0",
         "username": "root",
         "password": "123456"
+    },
+    "agents": {
+        "cso": {
+            "code": "cso",
+            "name": "Z3r0",
+            "description": "Chief Security Officer",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-3844...",
+            "model": "openai/gpt-5.5"
+        }
     }
 }

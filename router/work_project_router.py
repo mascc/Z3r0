@@ -8,6 +8,7 @@ from handler.work_project_handler import (
     retry_work_project_handler,
 )
 from middleware.auth import admin_required
+from router._responses import BAD_REQUEST_RESPONSE, COMMON_ERROR_RESPONSES, not_found_response
 from schema.response_schema import CommonResponse
 from schema.work_project_schema import (
     DeleteWorkProjectResponse,
@@ -16,32 +17,7 @@ from schema.work_project_schema import (
 )
 
 
-COMMON_ERROR_RESPONSES = {
-    401: {
-        "description": "Unauthorized",
-        "model": CommonResponse,
-    },
-    403: {
-        "description": "Forbidden",
-        "model": CommonResponse,
-    },
-    422: {
-        "description": "Validation Error",
-        "model": CommonResponse,
-    },
-}
-BAD_REQUEST_RESPONSE = {
-    400: {
-        "description": "Bad Request",
-        "model": CommonResponse,
-    },
-}
-NOT_FOUND_RESPONSE = {
-    404: {
-        "description": "Work project not found",
-        "model": CommonResponse,
-    },
-}
+NOT_FOUND_RESPONSE = not_found_response("Work project")
 
 
 router = APIRouter(prefix="/work-projects", tags=["work-projects"])

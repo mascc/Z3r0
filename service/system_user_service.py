@@ -5,20 +5,14 @@ from datetime import datetime, timedelta
 import jwt
 from sqlalchemy import or_
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from config import get_config
-from database import get_engine
+from database import get_async_session
 from logger import get_logger
 from model.system_user_model import SystemUser, SystemUserRole
 
 
 logger = get_logger(__name__)
-
-
-def _session() -> AsyncSession:
-    """create async database session"""
-    return AsyncSession(get_engine())
 
 
 def _encrypt_password(password: str) -> str:
@@ -44,7 +38,7 @@ async def create_system_user(
         updated_at=now,
     )
 
-    async with _session() as session:
+    async with get_async_session() as session:
         session.add(system_user)
         await session.commit()
         await session.refresh(system_user)
@@ -55,7 +49,7 @@ async def create_system_user(
 
 async def delete_system_user(id: int) -> bool:
     """delete system user"""
-    async with _session() as session:
+    async with get_async_session() as session:
         system_user = await session.get(SystemUser, id)
         if system_user is None:
             return False
@@ -75,7 +69,7 @@ async def update_system_user(
     role: SystemUserRole | None = None,
 ) -> SystemUser | None:
     """update system user"""
-    async with _session() as session:
+    async with get_async_session() as session:
         system_user = await session.get(SystemUser, id)
         if system_user is None:
             return None
@@ -113,7 +107,7 @@ async def query_system_users(page: int = 1, size: int = 100, keyword: str = "") 
             )
         )
 
-    async with _session() as session:
+    async with get_async_session() as session:
         result = await session.exec(statement)
         return list(result.all())
 
@@ -122,7 +116,7 @@ async def system_user_login(email: str, password: str) -> str | None:
     """system user login"""
     cfg = get_config()
 
-    async with _session() as session:
+    async with get_async_session() as session:
         result = await session.exec(select(SystemUser).where(SystemUser.email == email))
         system_user = result.first()
         if system_user is None:

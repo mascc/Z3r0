@@ -29,10 +29,21 @@ class DatabaseConfig(StrictConfigModel):
     password: str = Field(default="")
 
 
+# agent config
+class AgentConfig(StrictConfigModel):
+    code: str = Field(default="")
+    name: str = Field(default="")
+    description: str = Field(default="")
+    base_url: str = Field(default="")
+    api_key: str = Field(default="")
+    model: str = Field(default="")
+
+
 # global config
 class GlobalConfig(StrictConfigModel):
     system: SystemConfig = Field(default_factory=SystemConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    agents: dict[str, AgentConfig] = Field(default_factory=dict)
 
 
 ###

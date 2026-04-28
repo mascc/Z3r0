@@ -47,7 +47,7 @@ export function LoginPage() {
             <ShieldCheck size={28} />
           </div>
           <div>
-            <Text className="login-kicker">Red Team Operations</Text>
+            <Text className="login-kicker">Red Team Collaboration Platform</Text>
             <h1 id="login-title">Z3r0 Console</h1>
           </div>
         </div>
@@ -62,7 +62,7 @@ export function LoginPage() {
               value={email}
               onChange={setEmail}
               autoComplete="email"
-              placeholder="operator@z3r0.com"
+              placeholder="admin@z3r0.fans"
               required
             />
           </label>
@@ -75,7 +75,7 @@ export function LoginPage() {
               value={password}
               onChange={setPassword}
               autoComplete="current-password"
-              placeholder="Password"
+              placeholder="123456"
               required
             />
           </label>

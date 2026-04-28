@@ -1,8 +1,7 @@
-from typing import Any, Generic, TypeVar
-
-from pydantic import BaseModel, ConfigDict
+from typing import Generic, TypeVar
 
 from fastapi import status as http_status
+from pydantic import BaseModel, ConfigDict
 
 
 T = TypeVar("T")

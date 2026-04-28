@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from agents import set_tracing_disabled
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
@@ -8,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import ROOT_PATH
+from core.agents import get_z3r0_agent_pool
 from database import close_engine, create_all_tables, init_engine
 from logger import get_logger
 from middleware.auth import JwtAuthMiddleware, RoleAuthMiddleware, auth_whitelist
@@ -17,6 +19,7 @@ from middleware.response import (
     request_validation_exception_handler,
 )
 from model.system_user_model import SystemUserRole
+from router.agent_session_router import router as agent_session_router
 from router.sandbox_image_router import router as sandbox_image_router
 from router.system_user_router import router as system_user_router
 from router.work_project_router import router as work_project_router
@@ -40,7 +43,7 @@ async def _create_default_admin() -> None:
     await create_system_user(
         username="admin",
         password="123456",
-        email="admin@z3r0.com",
+        email="admin@z3r0.fans",
         role=SystemUserRole.ADMIN,
     )
     logger.info("default admin user created")
@@ -84,13 +87,16 @@ def _mount_api_not_found(app: FastAPI) -> None:
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     """ fastapi lifespan"""
     try:
-        # initialize database engine
         init_engine()
         await create_all_tables()
         await _create_default_admin()
 
+        set_tracing_disabled(True)
+        await get_z3r0_agent_pool().start()
+
         yield
     finally:
+        await get_z3r0_agent_pool().stop()
         await close_engine()
 
 
@@ -106,10 +112,11 @@ def create_app() -> FastAPI:
     app.add_middleware(RoleAuthMiddleware)
     app.add_middleware(JwtAuthMiddleware)
     logger.info("middleware added")
-    
+
     app.include_router(system_user_router, prefix=API_PREFIX)
     app.include_router(sandbox_image_router, prefix=API_PREFIX)
     app.include_router(work_project_router, prefix=API_PREFIX)
+    app.include_router(agent_session_router, prefix=API_PREFIX)
     logger.info("api router added")
 
     _mount_api_not_found(app)

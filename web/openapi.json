@@ -1,6 +1,45 @@
 {
   "components": {
     "schemas": {
+      "AgentSessionSummarySchema": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "message_count": {
+            "default": 0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_type": {
+            "$ref": "#/components/schemas/SessionTypeSchema",
+            "default": "chat"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AgentSessionSummarySchema",
+        "type": "object"
+      },
       "CommonResponse": {
         "properties": {
           "code": {
@@ -43,6 +82,32 @@
           }
         },
         "title": "CommonResponse[Any]",
+        "type": "object"
+      },
+      "CommonResponse_CreateAgentSessionResponse_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreateAgentSessionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "CommonResponse[CreateAgentSessionResponse]",
         "type": "object"
       },
       "CommonResponse_DeleteSandboxImageResponse_": {
@@ -121,6 +186,58 @@
           }
         },
         "title": "CommonResponse[DeleteWorkProjectResponse]",
+        "type": "object"
+      },
+      "CommonResponse_ListAgentEventsResponse_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListAgentEventsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "CommonResponse[ListAgentEventsResponse]",
+        "type": "object"
+      },
+      "CommonResponse_ListAgentSessionsResponse_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListAgentSessionsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "default": "success",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "CommonResponse[ListAgentSessionsResponse]",
         "type": "object"
       },
       "CommonResponse_QuerySandboxImagesResponse_": {
@@ -305,6 +422,19 @@
         "title": "CommonResponse[WorkProjectSchema]",
         "type": "object"
       },
+      "CreateAgentSessionResponse": {
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "CreateAgentSessionResponse",
+        "type": "object"
+      },
       "CreateSandboxImageRequest": {
         "properties": {
           "image_name": {
@@ -429,6 +559,138 @@
           "deleted"
         ],
         "title": "DeleteWorkProjectResponse",
+        "type": "object"
+      },
+      "ErrorEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "code": {
+            "default": "",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "const": "error",
+            "default": "error",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ErrorEvent",
+        "type": "object"
+      },
+      "HandoffEvent": {
+        "properties": {
+          "source_agent": {
+            "title": "Source Agent",
+            "type": "string"
+          },
+          "target_agent": {
+            "title": "Target Agent",
+            "type": "string"
+          },
+          "type": {
+            "const": "handoff",
+            "default": "handoff",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_agent",
+          "target_agent"
+        ],
+        "title": "HandoffEvent",
+        "type": "object"
+      },
+      "ListAgentEventsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "error": "#/components/schemas/ErrorEvent",
+                  "handoff": "#/components/schemas/HandoffEvent",
+                  "text_complete": "#/components/schemas/TextCompleteEvent",
+                  "text_delta": "#/components/schemas/TextDeltaEvent",
+                  "thinking_complete": "#/components/schemas/ThinkingCompleteEvent",
+                  "thinking_delta": "#/components/schemas/ThinkingDeltaEvent",
+                  "tool_call": "#/components/schemas/ToolCallEvent",
+                  "tool_result": "#/components/schemas/ToolResultEvent",
+                  "user_message": "#/components/schemas/UserMessageEvent"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/UserMessageEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/TextDeltaEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/TextCompleteEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ThinkingDeltaEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ThinkingCompleteEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolCallEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolResultEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/HandoffEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ErrorEvent"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "items"
+        ],
+        "title": "ListAgentEventsResponse",
+        "type": "object"
+      },
+      "ListAgentSessionsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSessionSummarySchema"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ListAgentSessionsResponse",
         "type": "object"
       },
       "QuerySandboxImagesResponse": {
@@ -563,6 +825,14 @@
         "title": "SandboxImageStatusSchema",
         "type": "string"
       },
+      "SessionTypeSchema": {
+        "enum": [
+          "chat",
+          "project"
+        ],
+        "title": "SessionTypeSchema",
+        "type": "string"
+      },
       "SystemUserLoginRequest": {
         "properties": {
           "email": {
@@ -645,6 +915,190 @@
         "title": "SystemUserSchema",
         "type": "object"
       },
+      "TextCompleteEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text_complete",
+            "default": "text_complete",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "text"
+        ],
+        "title": "TextCompleteEvent",
+        "type": "object"
+      },
+      "TextDeltaEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "text_delta",
+            "default": "text_delta",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "delta"
+        ],
+        "title": "TextDeltaEvent",
+        "type": "object"
+      },
+      "ThinkingCompleteEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "thinking_complete",
+            "default": "thinking_complete",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "text"
+        ],
+        "title": "ThinkingCompleteEvent",
+        "type": "object"
+      },
+      "ThinkingDeltaEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "thinking_delta",
+            "default": "thinking_delta",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "delta"
+        ],
+        "title": "ThinkingDeltaEvent",
+        "type": "object"
+      },
+      "ToolCallEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "tool_call",
+            "default": "tool_call",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "name"
+        ],
+        "title": "ToolCallEvent",
+        "type": "object"
+      },
+      "ToolResultEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "is_error": {
+            "default": false,
+            "title": "Is Error",
+            "type": "boolean"
+          },
+          "output": {
+            "default": "",
+            "title": "Output",
+            "type": "string"
+          },
+          "type": {
+            "const": "tool_result",
+            "default": "tool_result",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id"
+        ],
+        "title": "ToolResultEvent",
+        "type": "object"
+      },
       "UpdateSystemUserRequest": {
         "properties": {
           "email": {
@@ -697,6 +1151,25 @@
           }
         },
         "title": "UpdateSystemUserRequest",
+        "type": "object"
+      },
+      "UserMessageEvent": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "user_message",
+            "default": "user_message",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "UserMessageEvent",
         "type": "object"
       },
       "WorkProjectSchema": {
@@ -780,6 +1253,276 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/agent-sessions": {
+      "get": {
+        "description": "list recent agent sessions",
+        "operationId": "list_agent_sessions_route_api_agent_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_ListAgentSessionsResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List Agent Sessions Route",
+        "tags": [
+          "agent-sessions"
+        ]
+      },
+      "post": {
+        "description": "allocate a fresh server-generated session_id",
+        "operationId": "create_agent_session_route_api_agent_sessions_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_CreateAgentSessionResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create Agent Session Route",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/agent-sessions/{session_id}": {
+      "delete": {
+        "description": "delete an agent session and its SDK history",
+        "operationId": "delete_agent_session_route_api_agent_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Agent session not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete Agent Session Route",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/agent-sessions/{session_id}/events": {
+      "get": {
+        "description": "replay the unified event stream of an agent session",
+        "operationId": "list_agent_events_route_api_agent_sessions__session_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_ListAgentEventsResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResponse_Any_"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List Agent Events Route",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
     "/api/sandbox-images": {
       "get": {
         "description": "query sandbox images",

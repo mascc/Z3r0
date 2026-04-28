@@ -1,58 +1,47 @@
 import { Button, Popconfirm, Tag } from "@douyinfe/semi-ui";
 import { Pencil, Plus, RefreshCw, Trash2, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createSystemUser, deleteSystemUser, querySystemUsers, updateSystemUser } from "../../shared/api/systemUsers";
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
-import type { CreateSystemUserRequest, SystemUser, UpdateSystemUserRequest } from "../../shared/api/types";
+import type { CommonResponsePayload, CreateSystemUserRequest, SystemUser, UpdateSystemUserRequest } from "../../shared/api/types";
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
 import { ResourcePageShell } from "../../shared/components/ResourcePageShell";
+import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
+import { useResourceAction } from "../../shared/hooks/useResourceAction";
 import { formatDateTime } from "../../shared/lib/date";
 import { UserFormModal } from "./UserFormModal";
 
 const DEFAULT_PAGE_SIZE = 10;
 
-type ModalState =
-  | { open: false; mode: "create"; user: null }
-  | { open: true; mode: "create"; user: null }
-  | { open: true; mode: "edit"; user: SystemUser };
+type ModalState = { mode: "create" } | { mode: "edit"; user: SystemUser } | null;
 
 export function SystemUsersPage() {
-  const [users, setUsers] = useState<SystemUser[]>([]);
-  const [page, setPage] = useState(1);
-  const [keyword, setKeyword] = useState("");
-  const [activeKeyword, setActiveKeyword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const {
+    items: users,
+    page,
+    keyword,
+    loading,
+    loadItems: loadUsers,
+    setKeyword,
+    search,
+    previous,
+    next,
+    canGoBack,
+    canGoNext,
+  } = usePagedResourceList<SystemUser>({ pageSize: DEFAULT_PAGE_SIZE, query: querySystemUsers });
   const [saving, setSaving] = useState(false);
-  const [deletingUserId, setDeletingUserId] = useState<number | null>(null);
-  const [modalState, setModalState] = useState<ModalState>({ open: false, mode: "create", user: null });
+  const [modal, setModal] = useState<ModalState>(null);
   const setHeaderActions = useAdminHeaderActions();
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await querySystemUsers({ page, size: DEFAULT_PAGE_SIZE, keyword: activeKeyword });
-      const items = response.data?.items || [];
-      if (items.length === 0 && page > 1) {
-        setPage((current) => Math.max(1, current - 1));
-        return;
-      }
-      setUsers(items);
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setLoading(false);
-    }
-  }, [activeKeyword, page]);
-
-  useEffect(() => {
-    void loadUsers();
-  }, [loadUsers]);
+  const { run: deleteUser, busyId: deletingUserId } = useResourceAction<SystemUser>(
+    (user) => deleteSystemUser(user.id),
+    loadUsers,
+  );
 
   useEffect(() => {
     setHeaderActions(
       <>
         <Button icon={<RefreshCw size={16} />} onClick={() => void loadUsers()} loading={loading} aria-label="Refresh users" />
-        <Button icon={<Plus size={16} />} theme="solid" type="danger" onClick={() => setModalState({ open: true, mode: "create", user: null })}>
+        <Button icon={<Plus size={16} />} theme="solid" type="danger" onClick={() => setModal({ mode: "create" })}>
           Create User
         </Button>
       </>,
@@ -71,48 +60,17 @@ export function SystemUsersPage() {
     [users],
   );
 
-  const handleCreate = async (payload: CreateSystemUserRequest) => {
+  const submit = async (action: () => Promise<CommonResponsePayload>) => {
     setSaving(true);
     try {
-      const response = await createSystemUser(payload);
+      const response = await action();
       showApiSuccess(response);
-      setModalState({ open: false, mode: "create", user: null });
+      setModal(null);
       await loadUsers();
     } catch (error) {
       showApiError(error);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleUpdate = async (user: SystemUser, payload: UpdateSystemUserRequest) => {
-    setSaving(true);
-    try {
-      const response = await updateSystemUser(user.id, payload);
-      showApiSuccess(response);
-      setModalState({ open: false, mode: "create", user: null });
-      await loadUsers();
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (user: SystemUser) => {
-    if (deletingUserId !== null) {
-      return;
-    }
-
-    setDeletingUserId(user.id);
-    try {
-      const response = await deleteSystemUser(user.id);
-      showApiSuccess(response);
-      await loadUsers();
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setDeletingUserId(null);
     }
   };
 
@@ -125,18 +83,18 @@ export function SystemUsersPage() {
         metrics={[
           { label: "Total loaded", value: users.length },
           { label: "Admins", value: roleSummary.admin },
-          { label: "Operators", value: roleSummary.user },
+          { label: "Users", value: roleSummary.user },
         ]}
         empty={users.length === 0}
         emptyIcon={<Users size={42} />}
         emptyTitle="No users found"
         page={page}
-        canGoBack={page > 1}
-        canGoNext={users.length === DEFAULT_PAGE_SIZE}
+        canGoBack={canGoBack}
+        canGoNext={canGoNext}
         onKeywordChange={setKeyword}
-        onSearch={() => { setPage(1); setActiveKeyword(keyword.trim()); }}
-        onPrevious={() => setPage((current) => Math.max(1, current - 1))}
-        onNext={() => setPage((current) => current + 1)}
+        onSearch={search}
+        onPrevious={previous}
+        onNext={next}
       >
         <div className="resource-table system-users-table" role="table" aria-label="System users">
           <div className="resource-table-row resource-table-head" role="row">
@@ -163,9 +121,9 @@ export function SystemUsersPage() {
                   icon={<Pencil size={15} />}
                   theme="borderless"
                   aria-label={`Edit ${user.username}`}
-                  onClick={() => setModalState({ open: true, mode: "edit", user })}
+                  onClick={() => setModal({ mode: "edit", user })}
                 />
-                <Popconfirm title="Delete user" content={`Delete ${user.username}?`} okType="danger" onConfirm={() => void handleDelete(user)}>
+                <Popconfirm title="Delete user" content={`Delete ${user.username}?`} okType="danger" onConfirm={() => void deleteUser(user)}>
                   <Button
                     icon={<Trash2 size={15} />}
                     theme="borderless"
@@ -180,23 +138,23 @@ export function SystemUsersPage() {
         </div>
       </ResourcePageShell>
 
-      {modalState.mode === "edit" && modalState.user ? (
+      {modal?.mode === "edit" ? (
         <UserFormModal
-          open={modalState.open}
+          open
           mode="edit"
-          user={modalState.user}
+          user={modal.user}
           saving={saving}
-          onCancel={() => setModalState({ open: false, mode: "create", user: null })}
-          onSubmit={(payload) => handleUpdate(modalState.user, payload)}
+          onCancel={() => setModal(null)}
+          onSubmit={(payload: UpdateSystemUserRequest) => submit(() => updateSystemUser(modal.user.id, payload))}
         />
       ) : (
         <UserFormModal
-          open={modalState.open}
+          open={modal?.mode === "create"}
           mode="create"
           user={null}
           saving={saving}
-          onCancel={() => setModalState({ open: false, mode: "create", user: null })}
-          onSubmit={handleCreate}
+          onCancel={() => setModal(null)}
+          onSubmit={(payload: CreateSystemUserRequest) => submit(() => createSystemUser(payload))}
         />
       )}
     </>

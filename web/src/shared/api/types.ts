@@ -66,3 +66,37 @@ export type CancelWorkProjectPathParams = PathParameters<paths["/api/work-projec
 export type CancelWorkProjectResponse = JsonResponse<paths["/api/work-projects/{id}/cancel"]["post"]>;
 export type RetryWorkProjectPathParams = PathParameters<paths["/api/work-projects/{id}/retry"]["post"]>;
 export type RetryWorkProjectResponse = JsonResponse<paths["/api/work-projects/{id}/retry"]["post"]>;
+
+export type AgentSessionSummary = components["schemas"]["AgentSessionSummarySchema"];
+export type SessionType = components["schemas"]["SessionTypeSchema"];
+
+export type ListAgentSessionsResponse = JsonResponse<paths["/api/agent-sessions"]["get"]>;
+export type ListAgentSessionsData = NonNullable<ListAgentSessionsResponse["data"]>;
+
+export type CreateAgentSessionResponse = JsonResponse<paths["/api/agent-sessions"]["post"]>;
+export type CreateAgentSessionData = NonNullable<CreateAgentSessionResponse["data"]>;
+
+export type ListAgentEventsResponse = JsonResponse<paths["/api/agent-sessions/{session_id}/events"]["get"]>;
+export type ListAgentEventsData = NonNullable<ListAgentEventsResponse["data"]>;
+export type DeleteAgentSessionResponse = JsonResponse<paths["/api/agent-sessions/{session_id}"]["delete"]>;
+
+export type UserMessageEvent = components["schemas"]["UserMessageEvent"];
+export type TextDeltaEvent = components["schemas"]["TextDeltaEvent"];
+export type TextCompleteEvent = components["schemas"]["TextCompleteEvent"];
+export type ThinkingDeltaEvent = components["schemas"]["ThinkingDeltaEvent"];
+export type ThinkingCompleteEvent = components["schemas"]["ThinkingCompleteEvent"];
+export type ToolCallEvent = components["schemas"]["ToolCallEvent"];
+export type ToolResultEvent = components["schemas"]["ToolResultEvent"];
+export type HandoffEvent = components["schemas"]["HandoffEvent"];
+export type ErrorEvent = components["schemas"]["ErrorEvent"];
+
+export type AgentContentEvent = ListAgentEventsData["items"][number];
+export type DoneEvent = { type: "done"; agent_name?: string };
+export type AgentStreamEvent = AgentContentEvent | DoneEvent;
+export type AgentEvent = AgentStreamEvent;
+export type AgentEventType = AgentEvent["type"];
+
+// websocket request payloads are out of OpenAPI scope, so this is the contract
+export type AgentStreamCommand =
+  | { action: "send"; text: string }
+  | { action: "interrupt" };

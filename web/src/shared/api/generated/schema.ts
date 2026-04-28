@@ -4,6 +4,70 @@
  */
 
 export interface paths {
+    "/api/agent-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Agent Sessions Route
+         * @description list recent agent sessions
+         */
+        get: operations["list_agent_sessions_route_api_agent_sessions_get"];
+        put?: never;
+        /**
+         * Create Agent Session Route
+         * @description allocate a fresh server-generated session_id
+         */
+        post: operations["create_agent_session_route_api_agent_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Agent Session Route
+         * @description delete an agent session and its SDK history
+         */
+        delete: operations["delete_agent_session_route_api_agent_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-sessions/{session_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Agent Events Route
+         * @description replay the unified event stream of an agent session
+         */
+        get: operations["list_agent_events_route_api_agent_sessions__session_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sandbox-images": {
         parameters: {
             query?: never;
@@ -244,6 +308,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentSessionSummarySchema */
+        AgentSessionSummarySchema: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Message Count
+             * @default 0
+             */
+            message_count: number;
+            /** Session Id */
+            session_id: string;
+            /** @default chat */
+            session_type: components["schemas"]["SessionTypeSchema"];
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** CommonResponse */
         CommonResponse: {
             /**
@@ -268,6 +359,20 @@ export interface components {
             code: number;
             /** Data */
             data?: unknown;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+        };
+        /** CommonResponse[CreateAgentSessionResponse] */
+        CommonResponse_CreateAgentSessionResponse_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            data?: components["schemas"]["CreateAgentSessionResponse"] | null;
             /**
              * Message
              * @default success
@@ -310,6 +415,34 @@ export interface components {
              */
             code: number;
             data?: components["schemas"]["DeleteWorkProjectResponse"] | null;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+        };
+        /** CommonResponse[ListAgentEventsResponse] */
+        CommonResponse_ListAgentEventsResponse_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            data?: components["schemas"]["ListAgentEventsResponse"] | null;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+        };
+        /** CommonResponse[ListAgentSessionsResponse] */
+        CommonResponse_ListAgentSessionsResponse_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            data?: components["schemas"]["ListAgentSessionsResponse"] | null;
             /**
              * Message
              * @default success
@@ -414,6 +547,11 @@ export interface components {
              */
             message: string;
         };
+        /** CreateAgentSessionResponse */
+        CreateAgentSessionResponse: {
+            /** Session Id */
+            session_id: string;
+        };
         /** CreateSandboxImageRequest */
         CreateSandboxImageRequest: {
             /** Image Name */
@@ -465,6 +603,50 @@ export interface components {
             deleted: boolean;
             /** Id */
             id: number;
+        };
+        /** ErrorEvent */
+        ErrorEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+            /** Message */
+            message: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+        };
+        /** HandoffEvent */
+        HandoffEvent: {
+            /** Source Agent */
+            source_agent: string;
+            /** Target Agent */
+            target_agent: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "handoff";
+        };
+        /** ListAgentEventsResponse */
+        ListAgentEventsResponse: {
+            /** Items */
+            items: (components["schemas"]["UserMessageEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["HandoffEvent"] | components["schemas"]["ErrorEvent"])[];
+            /** Session Id */
+            session_id: string;
+        };
+        /** ListAgentSessionsResponse */
+        ListAgentSessionsResponse: {
+            /** Items */
+            items: components["schemas"]["AgentSessionSummarySchema"][];
         };
         /** QuerySandboxImagesResponse */
         QuerySandboxImagesResponse: {
@@ -520,6 +702,11 @@ export interface components {
          * @enum {string}
          */
         SandboxImageStatusSchema: "pulling" | "ready" | "failed" | "canceled";
+        /**
+         * SessionTypeSchema
+         * @enum {string}
+         */
+        SessionTypeSchema: "chat" | "project";
         /** SystemUserLoginRequest */
         SystemUserLoginRequest: {
             /** Email */
@@ -557,6 +744,120 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** TextCompleteEvent */
+        TextCompleteEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /** Item Id */
+            item_id: string;
+            /** Text */
+            text: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text_complete";
+        };
+        /** TextDeltaEvent */
+        TextDeltaEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /** Delta */
+            delta: string;
+            /** Item Id */
+            item_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text_delta";
+        };
+        /** ThinkingCompleteEvent */
+        ThinkingCompleteEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /** Item Id */
+            item_id: string;
+            /** Text */
+            text: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "thinking_complete";
+        };
+        /** ThinkingDeltaEvent */
+        ThinkingDeltaEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /** Delta */
+            delta: string;
+            /** Item Id */
+            item_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "thinking_delta";
+        };
+        /** ToolCallEvent */
+        ToolCallEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_call";
+        };
+        /** ToolResultEvent */
+        ToolResultEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /** Call Id */
+            call_id: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+            /**
+             * Output
+             * @default
+             */
+            output: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_result";
+        };
         /** UpdateSystemUserRequest */
         UpdateSystemUserRequest: {
             /** Email */
@@ -566,6 +867,16 @@ export interface components {
             role?: components["schemas"]["SystemUserRoleSchema"] | null;
             /** Username */
             username?: string | null;
+        };
+        /** UserMessageEvent */
+        UserMessageEvent: {
+            /** Text */
+            text: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "user_message";
         };
         /** WorkProjectSchema */
         WorkProjectSchema: {
@@ -609,6 +920,209 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_agent_sessions_route_api_agent_sessions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_ListAgentSessionsResponse_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    create_agent_session_route_api_agent_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_CreateAgentSessionResponse_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    delete_agent_session_route_api_agent_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Agent session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    list_agent_events_route_api_agent_sessions__session_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_ListAgentEventsResponse_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
     query_sandbox_images_route_api_sandbox_images_get: {
         parameters: {
             query?: {

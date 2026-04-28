@@ -3,18 +3,14 @@ from uuid import uuid4
 
 from sqlalchemy import String, cast, or_
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
-from database import get_engine
+from database import get_async_session
 from logger import get_logger
 from model.work_project_model import WorkProject, WorkProjectStatus, WorkProjectType
+from service.agent_session_service import delete_session_records_in_session, materialize_project_session_record
 
 
 logger = get_logger(__name__)
-
-
-def _session() -> AsyncSession:
-    return AsyncSession(get_engine())
 
 
 async def create_work_project(
@@ -34,8 +30,9 @@ async def create_work_project(
         updated_at=now,
     )
 
-    async with _session() as session:
+    async with get_async_session() as session:
         session.add(work_project)
+        await materialize_project_session_record(session, work_project.session_id)
         await session.commit()
         await session.refresh(work_project)
 
@@ -45,7 +42,7 @@ async def create_work_project(
 
 async def cancel_work_project(id: int) -> tuple[WorkProject | None, bool]:
     """cancel an active work project"""
-    async with _session() as session:
+    async with get_async_session() as session:
         work_project = await session.get(WorkProject, id)
         if work_project is None:
             return None, False
@@ -63,22 +60,48 @@ async def cancel_work_project(id: int) -> tuple[WorkProject | None, bool]:
 
 
 async def delete_work_project(id: int) -> bool:
-    """delete work project"""
-    async with _session() as session:
+    """delete work project and its associated agent session in one transaction"""
+    async with get_async_session() as session:
         work_project = await session.get(WorkProject, id)
         if work_project is None:
             return False
 
+        session_id = work_project.session_id
+        from core.agents import get_z3r0_agent_pool
+        await get_z3r0_agent_pool().discard(session_id)
         await session.delete(work_project)
+        await delete_session_records_in_session(session, session_id)
         await session.commit()
 
     logger.info("work project deleted: %s", id)
     return True
 
 
+async def delete_work_project_record_by_session_id_in_session(session, session_id: str) -> bool:
+    """delete the project row paired with a session inside an existing transaction"""
+    if not session_id:
+        return False
+    result = await session.exec(select(WorkProject).where(WorkProject.session_id == session_id))
+    work_project = result.first()
+    if work_project is None:
+        return False
+    project_id = work_project.id
+    await session.delete(work_project)
+    logger.info("work project deleted by session: %s", project_id)
+    return True
+
+
+async def delete_work_project_record_by_session_id(session_id: str) -> bool:
+    """delete the project row paired with a session without touching session records"""
+    async with get_async_session() as session:
+        deleted = await delete_work_project_record_by_session_id_in_session(session, session_id)
+        await session.commit()
+    return deleted
+
+
 async def retry_work_project(id: int) -> tuple[WorkProject | None, bool]:
     """retry a failed or canceled work project"""
-    async with _session() as session:
+    async with get_async_session() as session:
         work_project = await session.get(WorkProject, id)
         if work_project is None:
             return None, False
@@ -93,6 +116,16 @@ async def retry_work_project(id: int) -> tuple[WorkProject | None, bool]:
 
     logger.info("work project retried: %s", work_project.id)
     return work_project, True
+
+
+async def get_work_project_by_session_id(session_id: str) -> WorkProject | None:
+    """look up a work project by its allocated agent session_id"""
+    if not session_id:
+        return None
+    statement = select(WorkProject).where(WorkProject.session_id == session_id)
+    async with get_async_session() as session:
+        result = await session.exec(statement)
+        return result.first()
 
 
 async def query_work_projects(page: int = 1, size: int = 100, keyword: str = "") -> list[WorkProject]:
@@ -112,6 +145,6 @@ async def query_work_projects(page: int = 1, size: int = 100, keyword: str = "")
             )
         )
 
-    async with _session() as session:
+    async with get_async_session() as session:
         result = await session.exec(statement)
         return list(result.all())
