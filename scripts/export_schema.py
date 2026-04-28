@@ -99,7 +99,7 @@ def _patch_error_contracts(schema: dict[str, Any]) -> None:
 
 def _patch_list_query_contracts(schema: dict[str, Any]) -> None:
     """document handler-level list query constraints that FastAPI cannot infer"""
-    list_paths = ("/api/system-users", "/api/sandbox-images")
+    list_paths = ("/api/system-users", "/api/sandbox-images", "/api/work-projects")
     for path in list_paths:
         operation = schema.get("paths", {}).get(path, {}).get("get")
         if not isinstance(operation, dict):

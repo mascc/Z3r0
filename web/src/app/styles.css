@@ -407,6 +407,10 @@ button, input {
   grid-template-columns: minmax(280px, 360px) 110px 120px minmax(150px, 1fr) minmax(150px, 1fr) 104px;
 }
 
+.work-projects-table .resource-table-row {
+  grid-template-columns: minmax(220px, 300px) 160px 112px minmax(200px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) 104px;
+}
+
 .resource-table-head {
   min-height: 42px;
   color: #68778f;
@@ -417,7 +421,8 @@ button, input {
 }
 
 .user-identity,
-.image-identity {
+.image-identity,
+.project-identity {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -427,7 +432,10 @@ button, input {
 .user-identity strong,
 .user-identity span,
 .image-identity strong,
-.image-identity span {
+.image-identity span,
+.project-identity strong,
+.project-identity span,
+.resource-description {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -435,12 +443,15 @@ button, input {
 }
 
 .user-identity strong,
-.image-identity strong {
+.image-identity strong,
+.project-identity strong {
   color: #162033;
 }
 
 .user-identity span,
-.image-identity span {
+.image-identity span,
+.project-identity span,
+.resource-description {
   color: #66758b;
   font-size: 13px;
 }
@@ -451,7 +462,8 @@ button, input {
   gap: 6px;
 }
 
-.sandbox-images-table .semi-tag {
+.sandbox-images-table .semi-tag,
+.work-projects-table .semi-tag {
   width: fit-content;
   text-transform: capitalize;
 }

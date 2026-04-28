@@ -1,11 +1,12 @@
 import { Button, Popconfirm, Tag, Tooltip } from "@douyinfe/semi-ui";
 import { Ban, Boxes, Fingerprint, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cancelSandboxImage, createSandboxImage, deleteSandboxImage, querySandboxImages, retrySandboxImage } from "../../shared/api/sandboxImages";
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
 import type { CreateSandboxImageRequest, SandboxImage, SandboxImageStatus } from "../../shared/api/types";
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
 import { ResourcePageShell } from "../../shared/components/ResourcePageShell";
+import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
 import { formatDateTime } from "../../shared/lib/date";
 import { formatBytes } from "../../shared/lib/number";
 import { SandboxImageFormModal } from "./SandboxImageFormModal";
@@ -25,38 +26,25 @@ function renderImageHash(imageHash: string) {
 }
 
 export function SandboxImagesPage() {
-  const [images, setImages] = useState<SandboxImage[]>([]);
-  const [page, setPage] = useState(1);
-  const [keyword, setKeyword] = useState("");
-  const [activeKeyword, setActiveKeyword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const {
+    items: images,
+    page,
+    keyword,
+    loading,
+    loadItems: loadImages,
+    setKeyword,
+    search,
+    previous,
+    next,
+    canGoBack,
+    canGoNext,
+  } = usePagedResourceList<SandboxImage>({ pageSize: DEFAULT_PAGE_SIZE, query: querySandboxImages });
   const [saving, setSaving] = useState(false);
   const [cancelingImageId, setCancelingImageId] = useState<number | null>(null);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
   const [retryingImageId, setRetryingImageId] = useState<number | null>(null);
   const [modalState, setModalState] = useState<ModalState>({ open: false });
   const setHeaderActions = useAdminHeaderActions();
-
-  const loadImages = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await querySandboxImages({ page, size: DEFAULT_PAGE_SIZE, keyword: activeKeyword });
-      const items = response.data?.items || [];
-      if (items.length === 0 && page > 1) {
-        setPage((current) => Math.max(1, current - 1));
-        return;
-      }
-      setImages(items);
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setLoading(false);
-    }
-  }, [activeKeyword, page]);
-
-  useEffect(() => {
-    void loadImages();
-  }, [loadImages]);
 
   useEffect(() => {
     setHeaderActions(
@@ -163,12 +151,12 @@ export function SandboxImagesPage() {
         emptyIcon={<Boxes size={42} />}
         emptyTitle="No images found"
         page={page}
-        canGoBack={page > 1}
-        canGoNext={images.length === DEFAULT_PAGE_SIZE}
+        canGoBack={canGoBack}
+        canGoNext={canGoNext}
         onKeywordChange={setKeyword}
-        onSearch={() => { setPage(1); setActiveKeyword(keyword.trim()); }}
-        onPrevious={() => setPage((current) => Math.max(1, current - 1))}
-        onNext={() => setPage((current) => current + 1)}
+        onSearch={search}
+        onPrevious={previous}
+        onNext={next}
       >
         <div className="resource-table sandbox-images-table" role="table" aria-label="Sandbox images">
           <div className="resource-table-row resource-table-head" role="row">

@@ -4,6 +4,7 @@ import { AdminLayout } from "./layouts/AdminLayout";
 import { LoginPage } from "../features/auth/LoginPage";
 import { SandboxImagesPage } from "../features/sandbox-images/SandboxImagesPage";
 import { SystemUsersPage } from "../features/system-users/SystemUsersPage";
+import { WorkProjectsPage } from "../features/work-projects/WorkProjectsPage";
 
 function ProtectedRoute() {
   const { isAuthenticated } = useAuth();
@@ -39,6 +40,7 @@ export function App() {
               <Route index element={<Navigate to="/system-users" replace />} />
               <Route path="/sandbox-images" element={<SandboxImagesPage />} />
               <Route path="/system-users" element={<SystemUsersPage />} />
+              <Route path="/work-projects" element={<WorkProjectsPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/system-users" replace />} />

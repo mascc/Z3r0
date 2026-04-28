@@ -49,3 +49,20 @@ export type CancelSandboxImagePathParams = PathParameters<paths["/api/sandbox-im
 export type CancelSandboxImageResponse = JsonResponse<paths["/api/sandbox-images/{id}/cancel"]["post"]>;
 export type RetrySandboxImagePathParams = PathParameters<paths["/api/sandbox-images/{id}/retry"]["post"]>;
 export type RetrySandboxImageResponse = JsonResponse<paths["/api/sandbox-images/{id}/retry"]["post"]>;
+
+export type QueryWorkProjectsParams = QueryParameters<paths["/api/work-projects"]["get"]>;
+export type QueryWorkProjectsResponse = JsonResponse<paths["/api/work-projects"]["get"]>;
+export type QueryWorkProjectsData = NonNullable<QueryWorkProjectsResponse["data"]>;
+export type WorkProject = QueryWorkProjectsData["items"][number];
+export type WorkProjectStatus = WorkProject["status"];
+export type WorkProjectType = WorkProject["type"];
+
+export type CreateWorkProjectRequest = JsonRequestBody<paths["/api/work-projects"]["post"]>;
+export type CreateWorkProjectResponse = JsonResponse<paths["/api/work-projects"]["post"]>;
+
+export type WorkProjectPathParams = PathParameters<paths["/api/work-projects/{id}"]["delete"]>;
+export type DeleteWorkProjectResponse = JsonResponse<paths["/api/work-projects/{id}"]["delete"]>;
+export type CancelWorkProjectPathParams = PathParameters<paths["/api/work-projects/{id}/cancel"]["post"]>;
+export type CancelWorkProjectResponse = JsonResponse<paths["/api/work-projects/{id}/cancel"]["post"]>;
+export type RetryWorkProjectPathParams = PathParameters<paths["/api/work-projects/{id}/retry"]["post"]>;
+export type RetryWorkProjectResponse = JsonResponse<paths["/api/work-projects/{id}/retry"]["post"]>;

@@ -1,5 +1,5 @@
 import { Avatar, Button } from "@douyinfe/semi-ui";
-import { Boxes, LogOut, ShieldCheck, Users } from "lucide-react";
+import { Boxes, FolderKanban, LogOut, ShieldCheck, Users } from "lucide-react";
 import { ReactNode, useCallback, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { useAuth } from "../../shared/auth/AuthProvider";
@@ -22,6 +22,12 @@ const navItems = [
     label: "Sandbox Images",
     eyebrow: "Execution Baseline",
     icon: Boxes,
+  },
+  {
+    path: "/work-projects",
+    label: "Work Projects",
+    eyebrow: "Project Operations",
+    icon: FolderKanban,
   },
 ];
 

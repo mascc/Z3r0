@@ -19,6 +19,7 @@ from middleware.response import (
 from model.system_user_model import SystemUserRole
 from router.sandbox_image_router import router as sandbox_image_router
 from router.system_user_router import router as system_user_router
+from router.work_project_router import router as work_project_router
 from schema.response_schema import CommonResponse
 from service.system_user_service import create_system_user, query_system_users
 
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     
     app.include_router(system_user_router, prefix=API_PREFIX)
     app.include_router(sandbox_image_router, prefix=API_PREFIX)
+    app.include_router(work_project_router, prefix=API_PREFIX)
     logger.info("api router added")
 
     _mount_api_not_found(app)
