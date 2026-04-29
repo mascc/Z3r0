@@ -133,6 +133,11 @@
   border-bottom: 1px solid #edf2f7;
 }
 
+.resource-table-row > [role="cell"],
+.resource-table-row > [role="columnheader"] {
+  min-width: 0;
+}
+
 .resource-table-head {
   min-height: 42px;
   color: #68778f;
@@ -149,6 +154,35 @@
   min-width: 0;
   align-items: center;
   gap: 12px;
+}
+
+.user-identity > div:last-child,
+.image-identity > div:last-child,
+.project-identity > div:last-child {
+  min-width: 0;
+}
+
+.work-projects-table {
+  min-width: 0;
+}
+
+.work-projects-table .resource-table-row {
+  gap: 8px;
+  padding-inline: 14px;
+}
+
+.work-projects-table .row-actions {
+  gap: 2px;
+}
+
+.work-projects-table .row-actions .semi-button {
+  width: 26px;
+  padding-inline: 0;
+}
+
+.resource-cell-created,
+.resource-cell-updated {
+  white-space: nowrap;
 }
 
 .user-identity strong,

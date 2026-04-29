@@ -88,37 +88,37 @@ export function WorkProjectsPage() {
 
   const columns: ResourceColumn<WorkProject>[] = [
     {
-      key: "project", header: "Project", width: "minmax(220px, 300px)",
+      key: "project", header: "Project", width: "minmax(176px, 0.9fr)",
       render: (project) => (
         <div className="project-identity">
           <div className="resource-avatar"><FolderKanban size={18} /></div>
           <div>
             <strong>{project.name}</strong>
-            <span>{project.session_id || "No session"}</span>
+            <span title={project.session_id || undefined}>{project.session_id || "No session"}</span>
           </div>
         </div>
       ),
     },
     {
-      key: "type", header: "Type", width: "160px",
+      key: "type", header: "Type", width: "124px",
       render: (project) => (
         <Tag color={WORK_PROJECT_TYPE_COLOR[project.type]}>{WORK_PROJECT_TYPE_LABEL[project.type]}</Tag>
       ),
     },
     {
-      key: "status", header: "Status", width: "112px",
+      key: "status", header: "Status", width: "100px",
       render: (project) => (
         <Tag color={WORK_PROJECT_STATUS_COLOR[project.status]}>{WORK_PROJECT_STATUS_LABEL[project.status]}</Tag>
       ),
     },
     {
-      key: "description", header: "Description", width: "minmax(200px, 1fr)",
+      key: "description", header: "Description", width: "minmax(0, 0.7fr)",
       render: (project) => <div className="resource-description">{project.description || "-"}</div>,
     },
-    { key: "created", header: "Created", width: "132px", render: (p) => formatDateTime(p.created_at) },
-    { key: "updated", header: "Updated", width: "132px", render: (p) => formatDateTime(p.updated_at) },
+    { key: "created", header: "Created", width: "minmax(150px, 0.5fr)", render: (p) => formatDateTime(p.created_at) },
+    { key: "updated", header: "Updated", width: "minmax(150px, 0.5fr)", render: (p) => formatDateTime(p.updated_at) },
     {
-      key: "actions", header: "Actions", width: "104px",
+      key: "actions", header: "Actions", width: "106px",
       render: (project) => (
         <div className="row-actions">
           <Button icon={<Play size={15} />} theme="borderless" type="primary"
@@ -169,6 +169,7 @@ export function WorkProjectsPage() {
       >
         <ResourceTable<WorkProject>
           ariaLabel="Work projects"
+          className="work-projects-table"
           columns={columns}
           rows={projects}
           rowKey={(project) => project.id}

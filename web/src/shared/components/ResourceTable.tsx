@@ -9,18 +9,21 @@ export type ResourceColumn<T> = {
 
 type ResourceTableProps<T> = {
   ariaLabel: string;
+  className?: string;
   columns: ResourceColumn<T>[];
   rows: T[];
   rowKey: (row: T) => string | number;
 };
 
-export function ResourceTable<T>({ ariaLabel, columns, rows, rowKey }: ResourceTableProps<T>) {
+export function ResourceTable<T>({ ariaLabel, className, columns, rows, rowKey }: ResourceTableProps<T>) {
   const gridTemplate: CSSProperties = {
     gridTemplateColumns: columns.map((col) => col.width).join(" "),
   };
 
+  const tableClassName = className ? `resource-table ${className}` : "resource-table";
+
   return (
-    <div className="resource-table" role="table" aria-label={ariaLabel}>
+    <div className={tableClassName} role="table" aria-label={ariaLabel}>
       <div className="resource-table-row resource-table-head" role="row" style={gridTemplate}>
         {columns.map((col) => (
           <div key={col.key} role="columnheader">{col.header}</div>
