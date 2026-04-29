@@ -15,7 +15,7 @@ from openai.types.responses import (
 )
 
 from config import WORKSPACE, get_config
-from core.agent_events import event_from_sdk_stream
+from core.events import event_from_sdk_stream
 from database import get_engine
 from logger import get_logger
 from schema.agent_event_schema import (

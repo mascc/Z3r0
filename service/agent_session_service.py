@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from core.agents import get_agent_pool
-from core.agent_events import events_from_sdk_message
+from core.events import events_from_sdk_message
 from database import get_async_session
 from logger import get_logger
 from model.agent_session_meta_model import AgentSessionMeta
