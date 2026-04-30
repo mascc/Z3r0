@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from agents import Agent, Runner, TResponseInputItem
+from agents import Agent, Runner, TResponseInputItem, Tool
 from agents.extensions.memory import SQLAlchemySession
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.stream_events import AgentUpdatedStreamEvent
@@ -15,7 +15,9 @@ from openai.types.responses import (
 )
 
 from config import WORKSPACE, get_config
+from core.context import AgentRuntimeContext
 from core.events import event_from_sdk_stream
+from core.tools import execute_command
 from database import get_engine
 from logger import get_logger
 from schema.agent_event_schema import (
@@ -46,23 +48,52 @@ class RootAgentFactory:
     def __init__(self) -> None:
         self._cache: dict[str, Agent] = {}
 
-    def build(self, role: str = "cso") -> Agent:
-        cached = self._cache.get(role)
+    def _build_subagent(self, agent_code: str, agent_name: str, allowed_tools: list[Tool] | None = None) -> Agent:
+        cfg = get_config()
+        agent_cfg = cfg.agents.get(agent_code)
+        if agent_cfg is None:
+            raise ValueError(f"agent config not found for code: {agent_code}")
+
+        agent_path = WORKSPACE / "agents" / agent_code
+        agent_soul_md = (agent_path / "SOUL.md").read_text(encoding="utf-8").strip()
+        agent_agents_md = (agent_path / "AGENTS.md").read_text(encoding="utf-8").strip()
+        agent = Agent(
+            name=agent_name,
+            model=LitellmModel(base_url=agent_cfg.base_url, api_key=agent_cfg.api_key, model=agent_cfg.model),
+            instructions=f"{agent_soul_md}\n\n{agent_agents_md}",
+            tools=allowed_tools or [],
+        )
+        return agent
+
+    def build(self) -> Agent:
+        root_agent_code = "cso"
+
+        cached = self._cache.get(root_agent_code)
         if cached is not None:
             return cached
 
         cfg = get_config()
-        agent_cfg = cfg.agents.get(role)
-        if agent_cfg is None:
-            raise ValueError(f"agent config not found for role: {role}")
+        root_agent_cfg = cfg.agents.get(root_agent_code)
+        if root_agent_cfg is None:
+            raise ValueError(f"agent config not found for role: {root_agent_code}")
 
-        prompt_path = WORKSPACE / "agents" / agent_cfg.code
-        soul = (prompt_path / "SOUL.md").read_text(encoding="utf-8").strip()
-        agents_md = (prompt_path / "AGENTS.md").read_text(encoding="utf-8").strip()
-        llm = LitellmModel(base_url=agent_cfg.base_url, api_key=agent_cfg.api_key, model=agent_cfg.model)
-        agent = Agent(name=f"{agent_cfg.name} Agent", model=llm, instructions=f"{soul}\n\n{agents_md}")
-        self._cache[role] = agent
-        return agent
+        cse_agent = self._build_subagent(agent_code="cse", agent_name="Fr4nk", allowed_tools=[execute_command])
+
+        root_agent_path = WORKSPACE / "agents" / root_agent_cfg.code
+        root_agent_soul_md = (root_agent_path / "SOUL.md").read_text(encoding="utf-8").strip()
+        root_agent_agents_md = (root_agent_path / "AGENTS.md").read_text(encoding="utf-8").strip()
+        root_agent = Agent(
+            name=root_agent_cfg.name,
+            model=LitellmModel(
+                base_url=root_agent_cfg.base_url, api_key=root_agent_cfg.api_key, model=root_agent_cfg.model,
+            ),
+            instructions=f"{root_agent_soul_md}\n\n{root_agent_agents_md}",
+            handoffs=[
+                cse_agent,
+            ]
+        )
+        self._cache[root_agent_code] = root_agent
+        return root_agent
 
 
 @dataclass
@@ -87,12 +118,16 @@ class AgentSession:
         task = self._current_task
         return task is not None and not task.done()
 
-    async def stream_turn(self, text: str) -> AsyncIterator[AgentEventSchema]:
+    async def stream_turn(
+        self,
+        text: str,
+        context: AgentRuntimeContext,
+    ) -> AsyncIterator[AgentEventSchema]:
         async with self._turn_lock:
             task = asyncio.current_task()
             self._current_task = task
             try:
-                async for event in self._run_turn(text):
+                async for event in self._run_turn(text, context):
                     yield event
             finally:
                 if self._current_task is task:
@@ -109,7 +144,11 @@ class AgentSession:
             pass
         return True
 
-    async def _run_turn(self, text: str) -> AsyncIterator[AgentEventSchema]:
+    async def _run_turn(
+        self,
+        text: str,
+        context: AgentRuntimeContext,
+    ) -> AsyncIterator[AgentEventSchema]:
         yield UserMessageEvent(text=text)
 
         memory_session = SQLAlchemySession(session_id=self.session_id, engine=get_engine())
@@ -122,6 +161,7 @@ class AgentSession:
                 starting_agent=self._root_agent,
                 session=memory_session,
                 input=_build_user_input(text),
+                context=context,
             )
             async for sdk_event in result.stream_events():
                 if isinstance(sdk_event, AgentUpdatedStreamEvent):

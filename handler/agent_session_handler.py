@@ -8,7 +8,9 @@ from pydantic import ValidationError
 
 from config import get_config
 from core.agents import get_agent_pool
+from core.context import AgentRuntimeContext, AgentUserContext
 from logger import get_logger
+from middleware.auth import AuthUser
 from schema.agent_event_schema import (
     AgentEventSchema,
     AgentStreamActionSchema,
@@ -23,6 +25,7 @@ from schema.agent_session_schema import (
 )
 from schema.response_schema import CommonResponse
 from service import agent_session_service
+from service.sandbox_container_service import can_use_sandbox_container
 
 
 logger = get_logger(__name__)
@@ -52,7 +55,8 @@ async def list_agent_events_handler(session_id: str) -> CommonResponse:
 
 async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str) -> None:
     """drive one ws connection: receive AgentStreamCommands, stream AgentEvents back"""
-    if _decode_ws_token(token) is None:
+    user = _decode_ws_token(token)
+    if user is None:
         await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -77,7 +81,13 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
             if not text:
                 continue
             await _cancel_task(runner)
-            runner = asyncio.create_task(_run_turn(websocket, session_id, text))
+            runner = asyncio.create_task(_run_turn(
+                websocket=websocket,
+                session_id=session_id,
+                text=text,
+                user=user,
+                sandbox_container_id=command.sandbox_container_id,
+            ))
     except WebSocketDisconnect:
         await _cancel_task(runner)
     except Exception:
@@ -86,13 +96,20 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
         await _close_silently(websocket)
 
 
-async def _run_turn(websocket: WebSocket, session_id: str, text: str) -> None:
+async def _run_turn(
+    websocket: WebSocket,
+    session_id: str,
+    text: str,
+    user: AuthUser,
+    sandbox_container_id: int | None,
+) -> None:
     """run one user turn; always emits a DoneEvent so the client exits streaming"""
     await agent_session_service.ensure_chat_session_meta(session_id, text)
+    context = await _build_runtime_context(session_id, user, sandbox_container_id)
     runtime = get_agent_pool().get_or_create(session_id)
     saw_done = False
     try:
-        async for event in runtime.stream_turn(text):
+        async for event in runtime.stream_turn(text, context):
             if isinstance(event, DoneEvent):
                 saw_done = True
             if not await _send_event(websocket, event):
@@ -148,16 +165,47 @@ async def _close_silently(websocket: WebSocket) -> None:
         pass
 
 
-def _decode_ws_token(token: str) -> dict | None:
+async def _build_runtime_context(
+    session_id: str,
+    user: AuthUser,
+    sandbox_container_id: int | None,
+) -> AgentRuntimeContext:
+    selected_container_id = None
+    if sandbox_container_id is not None and await can_use_sandbox_container(
+        id=sandbox_container_id,
+        user_id=user.id,
+        user_role=user.role,
+    ):
+        selected_container_id = sandbox_container_id
+
+    return AgentRuntimeContext(
+        session_id=session_id,
+        user=AgentUserContext(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            role=user.role,
+        ),
+        sandbox_container_id=selected_container_id,
+    )
+
+
+def _decode_ws_token(token: str) -> AuthUser | None:
     if not token:
         return None
     cfg = get_config()
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             key=cfg.system.encrypt_key,
             algorithms=["HS256"],
             options={"require": ["exp", "id", "role", "email", "username", "sub"]},
         )
     except jwt.InvalidTokenError:
+        return None
+    try:
+        if payload.get("sub") != "z3r0":
+            return None
+        return AuthUser.from_payload(payload)
+    except (KeyError, ValueError, TypeError):
         return None

@@ -1,12 +1,15 @@
 import { Button, Spin } from "@douyinfe/semi-ui";
 import { Activity, Plus } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
 import { showApiError } from "../../shared/api/feedback";
+import { queryAvailableSandboxContainers } from "../../shared/api/sandboxContainers";
+import type { SandboxContainer } from "../../shared/api/types";
 import { useAgentSessionContext } from "./AgentSessionProvider";
 import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
+import { SandboxSelector } from "./SandboxSelector";
 
 type PlaygroundLocationState = { sessionId?: string };
 
@@ -26,6 +29,21 @@ export function PlaygroundPage() {
   } = useAgentSessionContext();
   const location = useLocation();
   const navigate = useNavigate();
+  const [sandboxContainers, setSandboxContainers] = useState<SandboxContainer[]>([]);
+  const [sandboxLoading, setSandboxLoading] = useState(false);
+  const [sandboxContainerId, setSandboxContainerId] = useState<number | null>(null);
+
+  const loadSandboxes = useCallback(async () => {
+    setSandboxLoading(true);
+    try {
+      const response = await queryAvailableSandboxContainers({ page: 1, size: 100, keyword: "" });
+      setSandboxContainers(response.data?.items ?? []);
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setSandboxLoading(false);
+    }
+  }, []);
 
   // consume sessionId from navigate state (e.g. project "Go") then clear so
   // back-navigation does not retrigger the jump
@@ -37,8 +55,19 @@ export function PlaygroundPage() {
     }
   }, [location.pathname, location.state, navigate, selectSession]);
 
+  useEffect(() => {
+    void loadSandboxes();
+  }, [loadSandboxes]);
+
   const headerNode = useMemo(() => (
     <>
+      <SandboxSelector
+        containers={sandboxContainers}
+        loading={sandboxLoading}
+        value={sandboxContainerId}
+        className="sandbox-selector-topbar"
+        onChange={setSandboxContainerId}
+      />
       <Button icon={<Plus size={16} />} theme="solid" type="primary" onClick={() => selectSession(null)}>
         New chat
       </Button>
@@ -47,7 +76,7 @@ export function PlaygroundPage() {
         <span>{STATUS_LABEL[status] ?? "Idle"}</span>
       </span>
     </>
-  ), [selectSession, status]);
+  ), [sandboxContainerId, sandboxContainers, sandboxLoading, selectSession, status]);
 
   useEffect(() => {
     setHeaderActions(headerNode);
@@ -56,7 +85,7 @@ export function PlaygroundPage() {
 
   const handleSend = async (text: string) => {
     try {
-      await send(text);
+      await send(text, sandboxContainerId);
     } catch (error) {
       showApiError(error);
     }

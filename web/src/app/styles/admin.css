@@ -157,10 +157,13 @@
 }
 
 .topbar-actions {
+  min-width: 0;
   justify-content: flex-end;
 }
 
 .topbar-resource-actions {
+  min-width: 0;
+  flex-wrap: nowrap;
   padding-right: 4px;
 }
 

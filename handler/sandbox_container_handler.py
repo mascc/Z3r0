@@ -24,6 +24,7 @@ from service.sandbox_container_service import (
     create_sandbox_container,
     delete_sandbox_container,
     open_container_shell,
+    query_available_sandbox_containers,
     query_sandbox_containers,
     read_container_shell,
     resize_container_shell,
@@ -100,6 +101,27 @@ async def delete_sandbox_container_handler(id: int) -> CommonResponse:
 
 async def query_sandbox_containers_handler(page: int, size: int, keyword: str) -> CommonResponse:
     sandbox_containers = await query_sandbox_containers(page=page, size=size, keyword=keyword)
+    return CommonResponse(data=QuerySandboxContainersResponse(
+        page=page,
+        size=size,
+        items=[_sandbox_container_schema(record) for record in sandbox_containers],
+    ))
+
+
+async def query_available_sandbox_containers_handler(
+    page: int,
+    size: int,
+    keyword: str,
+    user_id: int,
+    user_role: SystemUserRole,
+) -> CommonResponse:
+    sandbox_containers = await query_available_sandbox_containers(
+        page=page,
+        size=size,
+        keyword=keyword,
+        user_id=user_id,
+        user_role=user_role,
+    )
     return CommonResponse(data=QuerySandboxContainersResponse(
         page=page,
         size=size,

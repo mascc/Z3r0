@@ -20,6 +20,7 @@ from schema.sandbox_container_schema import (
     SandboxContainerStatus,
 )
 from schema.sandbox_image_schema import SandboxImageStatus
+from schema.system_user_schema import SystemUserRole
 
 
 logger = get_logger(__name__)
@@ -44,6 +45,12 @@ class SandboxContainerMutationResult:
     changed: bool
     message: str = ""
     not_found: bool = False
+
+
+@dataclass(frozen=True)
+class SandboxContainerCommandResult:
+    output: str
+    exit_code: int
 
 
 @dataclass(frozen=True)
@@ -178,6 +185,41 @@ def _remove_container_sync(container_hash: str) -> None:
         logger.info("sandbox container instance already absent: %s", container_hash)
     finally:
         client.close()
+
+
+def _execute_container_command_sync(container_hash: str, command: str) -> SandboxContainerCommandResult:
+    client = docker.from_env()
+    try:
+        container = client.containers.get(container_hash)
+        result = container.exec_run(
+            cmd=["/bin/sh", "-lc", command],
+            stdout=True,
+            stderr=True,
+            stdin=False,
+            tty=False,
+            demux=True,
+        )
+        stdout: bytes | str | None = None
+        stderr: bytes | str | None = None
+        if isinstance(result.output, tuple):
+            stdout, stderr = result.output
+        else:
+            stdout = result.output
+        exit_code = result.exit_code if isinstance(result.exit_code, int) else 1
+        return SandboxContainerCommandResult(
+            output=_decode_command_output(stdout) + _decode_command_output(stderr),
+            exit_code=exit_code,
+        )
+    finally:
+        client.close()
+
+
+def _decode_command_output(output: bytes | str | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode(errors="replace")
+    return output
 
 
 async def _load_sandbox_container_record(id: int) -> SandboxContainerRecord | None:
@@ -527,6 +569,63 @@ async def query_sandbox_containers(
         ]
 
 
+async def query_available_sandbox_containers(
+    user_id: int,
+    user_role: SystemUserRole,
+    page: int = 1,
+    size: int = 100,
+    keyword: str = "",
+) -> list[SandboxContainerRecord]:
+    statement = (
+        select(SandboxContainer, SandboxImage.image_name, SystemUser.username)
+        .join(SandboxImage, SandboxContainer.image_id == SandboxImage.id)
+        .join(SystemUser, SandboxContainer.owner_id == SystemUser.id)
+        .order_by(SandboxContainer.id)
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+
+    if user_role != SystemUserRole.ADMIN:
+        statement = statement.where(SandboxContainer.owner_id == user_id)
+    statement = statement.where(SandboxContainer.status == SandboxContainerStatus.RUNNING)
+
+    keyword = keyword.strip()
+    if keyword:
+        pattern = f"%{keyword}%"
+        statement = statement.where(
+            or_(
+                SandboxContainer.container_name.ilike(pattern),
+                SandboxContainer.container_hash.ilike(pattern),
+                SandboxImage.image_name.ilike(pattern),
+                SystemUser.username.ilike(pattern),
+                cast(SandboxContainer.status, String).ilike(pattern),
+                cast(SandboxContainer.port_mappings, String).ilike(pattern),
+            )
+        )
+
+    async with get_async_session() as session:
+        result = await session.exec(statement)
+        return [
+            SandboxContainerRecord(container=row[0], image_name=row[1], owner_username=row[2])
+            for row in result.all()
+        ]
+
+
+async def can_use_sandbox_container(
+    id: int,
+    user_id: int,
+    user_role: SystemUserRole,
+) -> bool:
+    async with get_async_session() as session:
+        sandbox_container = await session.get(SandboxContainer, id)
+        if sandbox_container is None:
+            return False
+        return (
+            sandbox_container.status == SandboxContainerStatus.RUNNING
+            and (user_role == SystemUserRole.ADMIN or sandbox_container.owner_id == user_id)
+        )
+
+
 async def resolve_shell_container(container_hash: str) -> SandboxContainer | None:
     async with get_async_session() as session:
         result = await session.exec(
@@ -698,3 +797,39 @@ def _close_shell_socket_sync(socket: object) -> None:
             close()
         except Exception:
             pass
+
+
+async def execute_sandbox_container_command(id: int, command: str) -> SandboxContainerCommandResult:
+    command = command.strip()
+    if not command:
+        raise ValueError("sandbox container command is required")
+
+    async with get_async_session() as session:
+        sandbox_container = await session.get(SandboxContainer, id)
+        if sandbox_container is None:
+            raise ValueError("sandbox container not found")
+        if sandbox_container.status != SandboxContainerStatus.RUNNING:
+            raise ValueError("only running sandbox containers can execute commands")
+
+        container_hash = sandbox_container.container_hash
+
+    try:
+        state = await asyncio.to_thread(_inspect_container_state_sync, container_hash)
+    except Exception:
+        logger.exception("sandbox container inspect failed before command execution: %s", id)
+        raise RuntimeError("failed to inspect sandbox container")
+
+    status = SandboxContainerStatus.ERROR if not state.exists else _docker_status_to_sandbox_status(state.status)
+    if status != SandboxContainerStatus.RUNNING:
+        await _save_sandbox_container_status(id, status)
+        raise RuntimeError("sandbox container is not running")
+
+    try:
+        return await asyncio.to_thread(_execute_container_command_sync, container_hash, command)
+    except docker.errors.NotFound:
+        logger.info("sandbox container instance not found while executing command: %s", id)
+        await _save_sandbox_container_status(id, SandboxContainerStatus.ERROR)
+        raise RuntimeError("sandbox container instance not found")
+    except Exception:
+        logger.exception("sandbox container command execution failed: %s", id)
+        raise RuntimeError("failed to execute sandbox container command")

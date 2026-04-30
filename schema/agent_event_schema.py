@@ -117,6 +117,7 @@ AgentEventSchema = Annotated[
 class AgentStreamSendCommand(BaseModel):
     action: Literal[AgentStreamActionSchema.SEND] = AgentStreamActionSchema.SEND
     text: str
+    sandbox_container_id: int | None = Field(default=None, gt=0)
 
 
 class AgentStreamInterruptCommand(BaseModel):

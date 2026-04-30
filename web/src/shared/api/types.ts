@@ -54,6 +54,8 @@ export type QuerySandboxContainersParams = QueryParameters<paths["/api/sandbox-c
 export type QuerySandboxContainersResponse = JsonResponse<paths["/api/sandbox-containers"]["get"]>;
 export type QuerySandboxContainersData = NonNullable<QuerySandboxContainersResponse["data"]>;
 export type SandboxContainer = QuerySandboxContainersData["items"][number];
+export type QueryAvailableSandboxContainersParams = QueryParameters<paths["/api/sandbox-containers/available"]["get"]>;
+export type QueryAvailableSandboxContainersResponse = JsonResponse<paths["/api/sandbox-containers/available"]["get"]>;
 export type SandboxContainerStatus = components["schemas"]["SandboxContainerStatus"];
 export type SandboxContainerPortMapping = components["schemas"]["SandboxContainerPortMapping"];
 

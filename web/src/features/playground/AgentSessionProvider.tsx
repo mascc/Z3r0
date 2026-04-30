@@ -62,7 +62,7 @@ type AgentSessionContextValue = {
   status: ConnectionStatus;
   historyLoading: boolean;
 
-  send: (text: string) => Promise<void>;
+  send: (text: string, sandboxContainerId?: number | null) => Promise<void>;
   interrupt: () => Promise<void>;
 };
 
@@ -86,7 +86,7 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
   const socketsRef = useRef<Map<string, WebSocket>>(new Map());
   const idleTimersRef = useRef<Map<string, number>>(new Map());
   const ensuredRef = useRef<Set<string>>(new Set());
-  const pendingSendRef = useRef<{ sessionId: string; text: string } | null>(null);
+  const pendingSendRef = useRef<{ sessionId: string; text: string; sandboxContainerId: number | null } | null>(null);
 
   // ---------------------------------------------------------------- helpers
   const initRuntime = useCallback((sessionId: string) => {
@@ -265,13 +265,17 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
     if (!runtime || runtime.historyLoading) return;
     pendingSendRef.current = null;
     updateRuntime(activeSessionId, (r) => ({ ...r, state: appendUserMessage(r.state, queued.text) }));
-    sendCommand(activeSessionId, { action: "send", text: queued.text }).catch(showApiError);
+    sendCommand(activeSessionId, {
+      action: "send",
+      text: queued.text,
+      sandbox_container_id: queued.sandboxContainerId,
+    }).catch(showApiError);
   }, [activeSessionId, runtimes, sendCommand, updateRuntime]);
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, sandboxContainerId: number | null = null) => {
     if (activeSessionId) {
       updateRuntime(activeSessionId, (r) => ({ ...r, state: appendUserMessage(r.state, text) }));
-      await sendCommand(activeSessionId, { action: "send", text });
+      await sendCommand(activeSessionId, { action: "send", text, sandbox_container_id: sandboxContainerId });
       return;
     }
     // lazy-create path: defer the actual send until activeSessionId + history settle
@@ -279,7 +283,7 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
       const response = await createAgentSession();
       const id = response.data?.session_id ?? null;
       if (!id) return;
-      pendingSendRef.current = { sessionId: id, text };
+      pendingSendRef.current = { sessionId: id, text, sandboxContainerId };
       setActiveSessionId(id);
     } catch (error) {
       showApiError(error);

@@ -5,6 +5,8 @@ import type {
   CreateSandboxContainerRequest,
   CreateSandboxContainerResponse,
   DeleteSandboxContainerResponse,
+  QueryAvailableSandboxContainersParams,
+  QueryAvailableSandboxContainersResponse,
   QuerySandboxContainersParams,
   QuerySandboxContainersResponse,
   SandboxContainerPathParams,
@@ -18,6 +20,10 @@ const SANDBOX_CONTAINERS_PATH = "/api/sandbox-containers";
 
 export function querySandboxContainers(params: QuerySandboxContainersParams) {
   return apiRequest<QuerySandboxContainersResponse>(`${SANDBOX_CONTAINERS_PATH}${buildQuery(params)}`);
+}
+
+export function queryAvailableSandboxContainers(params: QueryAvailableSandboxContainersParams) {
+  return apiRequest<QueryAvailableSandboxContainersResponse>(`${SANDBOX_CONTAINERS_PATH}/available${buildQuery(params)}`);
 }
 
 export function createSandboxContainer(payload: CreateSandboxContainerRequest) {

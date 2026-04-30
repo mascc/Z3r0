@@ -74,6 +74,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sandbox-containers/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query Available Sandbox Containers Route */
+        get: operations["query_available_sandbox_containers_route_api_sandbox_containers_available_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sandbox-containers/{id}": {
         parameters: {
             query?: never;
@@ -363,6 +380,11 @@ export interface components {
              * @enum {string}
              */
             action: "send";
+            /**
+             * Sandbox Container Id
+             * @default null
+             */
+            sandbox_container_id: number | null;
             /** Text */
             text: string;
         };
@@ -1346,6 +1368,48 @@ export interface operations {
             };
             /** @description Sandbox image not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_Any_"];
+                };
+            };
+        };
+    };
+    query_available_sandbox_containers_route_api_sandbox_containers_available_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+                keyword?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommonResponse_QuerySandboxContainersResponse_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -4,11 +4,12 @@ from handler.sandbox_container_handler import (
     create_sandbox_container_handler,
     delete_sandbox_container_handler,
     handle_container_shell_stream,
+    query_available_sandbox_containers_handler,
     query_sandbox_containers_handler,
     start_sandbox_container_handler,
     stop_sandbox_container_handler,
 )
-from middleware.auth import AuthUser, require_admin
+from middleware.auth import AuthUser, require_admin, require_user
 from router._responses import BAD_REQUEST_RESPONSE, COMMON_ERROR_RESPONSES, not_found_response
 from schema.response_schema import CommonResponse
 from schema.sandbox_container_schema import (
@@ -45,12 +46,35 @@ async def query_sandbox_containers_route(
     return await query_sandbox_containers_handler(page=page, size=size, keyword=keyword)
 
 
+async def query_available_sandbox_containers_route(
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=100, ge=1, le=100),
+    keyword: str = Query(default=""),
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[QuerySandboxContainersResponse]:
+    return await query_available_sandbox_containers_handler(
+        page=page,
+        size=size,
+        keyword=keyword,
+        user_id=user.id,
+        user_role=user.role,
+    )
+
+
 router.add_api_route(
     "",
     create_sandbox_container_route,
     methods=["POST"],
     response_model=CommonResponse[SandboxContainerSchema],
     responses={**COMMON_ERROR_RESPONSES, **BAD_REQUEST_RESPONSE, **CREATE_NOT_FOUND_RESPONSE},
+)
+
+router.add_api_route(
+    "/available",
+    query_available_sandbox_containers_route,
+    methods=["GET"],
+    response_model=CommonResponse[QuerySandboxContainersResponse],
+    responses=COMMON_ERROR_RESPONSES,
 )
 
 router.add_api_route(
