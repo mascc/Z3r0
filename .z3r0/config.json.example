@@ -19,6 +19,14 @@
             "base_url": "https://api.openai.com/v1",
             "api_key": "sk-3844...",
             "model": "openai/gpt-5.5"
+        },
+        "cse": {
+            "code": "cse",
+            "name": "Fr4nk",
+            "description": "Chief Security Engineer",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-3844...",
+            "model": "openai/gpt-5.5"
         }
     }
 }
