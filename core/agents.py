@@ -1,4 +1,6 @@
-"""Agent declarations and lazy SDK Agent construction. Edit `_AGENT_SPECS` to add or modify agents."""
+"""Agent declarations and session-bound SDK Agent construction."""
+
+from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
@@ -20,7 +22,11 @@ from schema.agent_event_schema import AgentEventSchema, ErrorEvent
 
 logger = get_logger(__name__)
 
-DEFAULT_AGENT_CODE = "cso"
+
+@dataclass(frozen=True, slots=True)
+class ToolMount:
+    tool: Tool
+    requires_sandbox_container: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,9 +39,24 @@ class SubagentMount:
 @dataclass(frozen=True, slots=True)
 class AgentSpec:
     code: str
-    tools: tuple[Tool, ...] = ()
+    tools: tuple[ToolMount, ...] = ()
     subagents: tuple[SubagentMount, ...] = ()
 
+
+@dataclass(frozen=True, slots=True)
+class AgentToolSnapshot:
+    sandbox_container_id: int | None = None
+    sandbox_container_generation: int = 0
+
+    @classmethod
+    def from_context(cls, context: AgentRuntimeContext) -> "AgentToolSnapshot":
+        return cls(
+            sandbox_container_id=context.sandbox_container_id,
+            sandbox_container_generation=context.sandbox_container_generation,
+        )
+
+
+DEFAULT_AGENT_CODE = "cso"
 
 _AGENT_SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
@@ -54,7 +75,7 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
     ),
     AgentSpec(
         code="cse",
-        tools=(execute_command,),
+        tools=(ToolMount(execute_command, requires_sandbox_container=True),),
     ),
 )
 
@@ -62,8 +83,6 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
 class AgentRegistry:
     def __init__(self, specs: tuple[AgentSpec, ...] = _AGENT_SPECS) -> None:
         self._specs: dict[str, AgentSpec] = {spec.code: spec for spec in specs}
-        self._agents: dict[str, Agent] = {}
-        self._building: set[str] = set()
         self._codes_cache: tuple[str, ...] | None = None
         self._code_to_name_cache: dict[str, str] | None = None
 
@@ -82,39 +101,30 @@ class AgentRegistry:
     def has(self, agent_code: str) -> bool:
         return agent_code in self.codes()
 
-    def get(self, agent_code: str) -> Agent:
-        cached = self._agents.get(agent_code)
-        if cached is not None:
-            return cached
-        if agent_code in self._building:
-            raise ValueError(f"circular subagent mount detected at {agent_code}")
+    def bind(self, tool_snapshot: AgentToolSnapshot) -> SessionAgentGraph:
+        return SessionAgentGraph(self, tool_snapshot)
 
+    def _spec(self, agent_code: str) -> AgentSpec:
         spec = self._specs.get(agent_code)
         if spec is None:
             raise ValueError(f"agent spec not declared for code: {agent_code}")
-        cfg = get_config().agents.get(agent_code)
-        if cfg is None:
-            raise ValueError(f"agent config missing for code: {agent_code}")
+        return spec
 
-        self._building.add(agent_code)
-        try:
-            agent = self._build(spec, cfg)
-            self._agents[agent_code] = agent
-            return agent
-        finally:
-            self._building.discard(agent_code)
-
-    def _build(self, spec: AgentSpec, cfg: AgentConfig) -> Agent:
+    def _build(self, spec: AgentSpec, cfg: AgentConfig, graph: SessionAgentGraph) -> Agent:
         agent_path = WORKSPACE / "agents" / spec.code
         soul = (agent_path / "SOUL.md").read_text(encoding="utf-8").strip()
         rules = (agent_path / "AGENTS.md").read_text(encoding="utf-8").strip()
 
-        tools: list[Tool] = list(spec.tools)
+        tools: list[Tool] = [
+            mount.tool for mount in spec.tools
+            if not mount.requires_sandbox_container or graph.tool_snapshot.sandbox_container_id is not None
+        ]
         for mount in spec.subagents:
             if mount.code == spec.code:
                 raise ValueError(f"agent {spec.code} cannot mount itself as a subagent")
-            self.get(mount.code)  # eager build catches circular mounts at boot
-            tools.append(_build_subagent_tool(spec.code, mount, registry=self))
+            child_graph = graph.child(mount.code)
+            child_graph.get(mount.code)  # eager build catches circular mounts at boot
+            tools.append(_build_subagent_tool(spec.code, mount, graph=child_graph))
 
         return Agent(
             name=cfg.name,
@@ -124,18 +134,65 @@ class AgentRegistry:
         )
 
 
-def _build_subagent_tool(parent_code: str, mount: SubagentMount, *, registry: AgentRegistry) -> Tool:
+class SessionAgentGraph:
+    def __init__(self, registry: AgentRegistry, tool_snapshot: AgentToolSnapshot) -> None:
+        self._registry = registry
+        self.tool_snapshot = tool_snapshot
+        self._agents: dict[str, Agent] = {}
+        self._building: set[str] = set()
+        self._children: dict[str, SessionAgentGraph] = {}
+
+    def code_to_name(self) -> dict[str, str]:
+        return self._registry.code_to_name()
+
+    def get(self, agent_code: str) -> Agent:
+        cached = self._agents.get(agent_code)
+        if cached is not None:
+            return cached
+        if agent_code in self._building:
+            raise ValueError(f"circular subagent mount detected at {agent_code}")
+
+        spec = self._registry._spec(agent_code)
+        cfg = get_config().agents.get(agent_code)
+        if cfg is None:
+            raise ValueError(f"agent config missing for code: {agent_code}")
+
+        self._building.add(agent_code)
+        try:
+            agent = self._registry._build(spec, cfg, self)
+            self._agents[agent_code] = agent
+            return agent
+        finally:
+            self._building.discard(agent_code)
+
+    def child(self, mount_code: str) -> "SessionAgentGraph":
+        child = self._children.get(mount_code)
+        if child is None:
+            child = SessionAgentGraph(self._registry, self.tool_snapshot)
+            child._building.update(self._building)
+            self._children[mount_code] = child
+        return child
+
+    def close(self) -> None:
+        for child in self._children.values():
+            child.close()
+        self._children.clear()
+        self._agents.clear()
+        self._building.clear()
+
+
+def _build_subagent_tool(parent_code: str, mount: SubagentMount, *, graph: SessionAgentGraph) -> Tool:
     """Synchronous subagent delegation tool: streams nested events to the parent's emitter,
     persists via Z3r0Session(nested_for=parent) so the subagent can recall it later."""
 
     async def _delegate(ctx: RunContextWrapper[AgentRuntimeContext], brief: str) -> str:
-        child_agent = registry.get(mount.code)
+        child_agent = graph.get(mount.code)
         nested_call_id = getattr(ctx, "tool_call_id", "") or ""
         nested_session = Z3r0Session(
             session_id=ctx.context.session_id,
             engine=get_engine(),
             viewing_agent_code=mount.code,
-            agent_code_to_name=registry.code_to_name(),
+            agent_code_to_name=graph.code_to_name(),
             nested_for_agent_code=parent_code,
             nested_call_id=nested_call_id,
         )

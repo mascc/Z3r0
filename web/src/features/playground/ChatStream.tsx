@@ -1,6 +1,6 @@
 import { Tag } from "@douyinfe/semi-ui";
 import { AlertOctagon, AtSign, Bot, Brain, ChevronDown, ChevronRight, Sparkles, Wrench } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentInfo } from "../../shared/api/types";
@@ -10,18 +10,84 @@ type ChatStreamProps = {
   nodes: ChatNode[];
   streaming: boolean;
   agents: AgentInfo[];
+  followLatest: boolean;
+  onFollowLatestChange: (following: boolean) => void;
+  onScrollToLatestReady: (handler: (() => void) | null) => void;
 };
 
-export function ChatStream({ nodes, streaming, agents }: ChatStreamProps) {
+export function ChatStream({
+  nodes,
+  streaming,
+  agents,
+  followLatest,
+  onFollowLatestChange,
+  onScrollToLatestReady,
+}: ChatStreamProps) {
   const tailRef = useRef<HTMLDivElement | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const lastScrollTopRef = useRef(0);
   const agentNameByCode = useMemo(
     () => new Map(agents.map((a) => [a.code, a.name])),
     [agents],
   );
 
   useEffect(() => {
+    const container = findScrollContainer(tailRef.current);
+    if (!container) {
+      onScrollToLatestReady(null);
+      return;
+    }
+
+    const syncFollowing = () => {
+      const scrollingUp = container.scrollTop < lastScrollTopRef.current - 2;
+      lastScrollTopRef.current = container.scrollTop;
+      if (scrollingUp) {
+        onFollowLatestChange(false);
+        return;
+      }
+      if (isNearScrollTail(container)) {
+        onFollowLatestChange(true);
+      }
+    };
+
+    const scrollToTail = () => {
+      onFollowLatestChange(true);
+      tailRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    };
+
+    syncFollowing();
+    onScrollToLatestReady(scrollToTail);
+    container.addEventListener("scroll", syncFollowing, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", syncFollowing);
+      onScrollToLatestReady(null);
+    };
+  }, [nodes.length, onFollowLatestChange, onScrollToLatestReady]);
+
+  useEffect(() => {
+    if (!followLatest) return;
     tailRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [nodes, streaming]);
+  }, [followLatest, nodes, streaming]);
+
+  const pauseFollowLatest = () => {
+    if (followLatest) onFollowLatestChange(false);
+  };
+
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) pauseFollowLatest();
+  };
+
+  const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    touchStartYRef.current = event.touches[0]?.clientY ?? null;
+  };
+
+  const handleTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const startY = touchStartYRef.current;
+    const currentY = event.touches[0]?.clientY;
+    if (startY != null && currentY != null && currentY > startY) {
+      pauseFollowLatest();
+    }
+  };
 
   if (nodes.length === 0) {
     return (
@@ -42,7 +108,12 @@ export function ChatStream({ nodes, streaming, agents }: ChatStreamProps) {
   const lastIndex = nodes.length - 1;
   const lastNode = nodes[lastIndex];
   return (
-    <div className="chat-stream">
+    <div
+      className="chat-stream"
+      onWheel={handleWheel}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+    >
       {nodes.map((node, index) => {
         if (node.kind === "user") {
           const targetName = agentNameByCode.get(node.targetAgentCode) ?? node.targetAgentCode;
@@ -56,6 +127,22 @@ export function ChatStream({ nodes, streaming, agents }: ChatStreamProps) {
       <div ref={tailRef} className="chat-tail" />
     </div>
   );
+}
+
+function isNearScrollTail(container: HTMLElement) {
+  return container.scrollHeight - container.scrollTop - container.clientHeight < 72;
+}
+
+function findScrollContainer(element: HTMLElement | null) {
+  let current = element?.parentElement ?? null;
+  while (current) {
+    const overflowY = window.getComputedStyle(current).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
 }
 
 function UserBubble({ text, targetName }: { text: string; targetName: string }) {

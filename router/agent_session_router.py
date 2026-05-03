@@ -7,7 +7,7 @@ from handler.agent_session_handler import (
     list_agent_events_handler,
     list_agent_sessions_handler,
 )
-from middleware.auth import require_user
+from middleware.auth import AuthUser, require_user
 from router._responses import COMMON_ERROR_RESPONSES, not_found_response
 from schema.agent_session_schema import (
     CreateAgentSessionResponse,
@@ -22,33 +22,45 @@ from schema.response_schema import CommonResponse
 # rather than at router scope
 router = APIRouter(prefix="/agent-sessions", tags=["agent-sessions"])
 
-USER_ONLY = [Depends(require_user)]
-
-
 async def list_agent_sessions_route(
     limit: int = Query(default=100, ge=1, le=100),
+    user: AuthUser = Depends(require_user),
 ) -> CommonResponse[ListAgentSessionsResponse]:
-    return await list_agent_sessions_handler(limit=limit)
+    return await list_agent_sessions_handler(limit=limit, user=user)
 
 
-async def list_agent_events_route(session_id: str) -> CommonResponse[ListAgentEventsResponse]:
-    return await list_agent_events_handler(session_id=session_id)
+async def create_agent_session_route(
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[CreateAgentSessionResponse]:
+    return await create_agent_session_handler(user=user)
+
+
+async def delete_agent_session_route(
+    session_id: str,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse:
+    return await delete_agent_session_handler(session_id=session_id, user=user)
+
+
+async def list_agent_events_route(
+    session_id: str,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[ListAgentEventsResponse]:
+    return await list_agent_events_handler(session_id=session_id, user=user)
 
 
 router.add_api_route(
     "",
     list_agent_sessions_route,
     methods=["GET"],
-    dependencies=USER_ONLY,
     response_model=CommonResponse[ListAgentSessionsResponse],
     responses=COMMON_ERROR_RESPONSES,
 )
 
 router.add_api_route(
     "",
-    create_agent_session_handler,
+    create_agent_session_route,
     methods=["POST"],
-    dependencies=USER_ONLY,
     response_model=CommonResponse[CreateAgentSessionResponse],
     responses=COMMON_ERROR_RESPONSES,
 )
@@ -57,16 +69,14 @@ router.add_api_route(
     "/{session_id}/events",
     list_agent_events_route,
     methods=["GET"],
-    dependencies=USER_ONLY,
     response_model=CommonResponse[ListAgentEventsResponse],
     responses=COMMON_ERROR_RESPONSES,
 )
 
 router.add_api_route(
     "/{session_id}",
-    delete_agent_session_handler,
+    delete_agent_session_route,
     methods=["DELETE"],
-    dependencies=USER_ONLY,
     response_model=CommonResponse,
     responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
 )

@@ -1,3 +1,5 @@
+import asyncio
+
 from agents import RunContextWrapper, function_tool
 
 from core.context import AgentRuntimeContext
@@ -18,6 +20,8 @@ async def execute_command(ctx: RunContextWrapper[AgentRuntimeContext], command: 
 
     try:
         result = await execute_sandbox_container_command(id=container_id, command=command)
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         return ToolResultSchema(
             status=ToolResultStatusSchema.ERROR,

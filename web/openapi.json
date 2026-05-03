@@ -41,6 +41,11 @@
             "title": "Message Count",
             "type": "integer"
           },
+          "owner_id": {
+            "default": 0,
+            "title": "Owner Id",
+            "type": "integer"
+          },
           "session_id": {
             "title": "Session Id",
             "type": "string"
@@ -128,6 +133,7 @@
               }
             ],
             "default": null,
+            "description": "Selected running sandbox container. Backend mounts sandbox tools only when this container is still usable by the current user.",
             "title": "Sandbox Container Id"
           },
           "text": {
@@ -1779,7 +1785,7 @@
         ]
       },
       "post": {
-        "operationId": "create_agent_session_handler_api_agent_sessions_post",
+        "operationId": "create_agent_session_route_api_agent_sessions_post",
         "responses": {
           "200": {
             "content": {
@@ -1817,7 +1823,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Create Agent Session Handler",
+        "summary": "Create Agent Session Route",
         "tags": [
           "agent-sessions"
         ]
@@ -1825,7 +1831,7 @@
     },
     "/api/agent-sessions/{session_id}": {
       "delete": {
-        "operationId": "delete_agent_session_handler_api_agent_sessions__session_id__delete",
+        "operationId": "delete_agent_session_route_api_agent_sessions__session_id__delete",
         "parameters": [
           {
             "in": "path",
@@ -1884,7 +1890,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Delete Agent Session Handler",
+        "summary": "Delete Agent Session Route",
         "tags": [
           "agent-sessions"
         ]
@@ -3385,7 +3391,7 @@
         ]
       },
       "post": {
-        "operationId": "create_work_project_handler_api_work_projects_post",
+        "operationId": "create_work_project_route_api_work_projects_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3443,7 +3449,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Create Work Project Handler",
+        "summary": "Create Work Project Route",
         "tags": [
           "work-projects"
         ]

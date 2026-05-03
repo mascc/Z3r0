@@ -15,7 +15,7 @@ from openai.types.responses import (
 )
 
 from config import get_config
-from core.agents import AgentRegistry
+from core.agents import AgentRegistry, AgentToolSnapshot, SessionAgentGraph
 from core.context import AgentRuntimeContext
 from core.events import event_from_sdk_stream
 from core.session import Z3r0Session
@@ -49,6 +49,9 @@ class AgentSession:
         self._registry = registry
         self._turn_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
+        self._main_agent_code: str = ""
+        self._tool_snapshot: AgentToolSnapshot | None = None
+        self._agent_graph: SessionAgentGraph | None = None
 
     def is_running(self) -> bool:
         task = self._current_task
@@ -78,17 +81,33 @@ class AgentSession:
             pass
         return True
 
+    async def shutdown(self) -> None:
+        await self.interrupt()
+        self.close()
+
+    def close(self) -> None:
+        self._dispose_agent_graph()
+
+    def uses_sandbox_container(self, container_id: int) -> bool:
+        return self._tool_snapshot is not None and self._tool_snapshot.sandbox_container_id == container_id
+
+    async def invalidate_tool_binding(self) -> None:
+        await self.interrupt()
+        self._tool_snapshot = None
+        self._dispose_agent_graph()
+
     async def _run_turn(
         self, text: str, agent_code: str, context: AgentRuntimeContext,
     ) -> AsyncIterator[AgentEventSchema]:
-        agent = self._registry.get(agent_code)
+        graph = self._ensure_agent_graph(agent_code, context)
+        agent = graph.get(agent_code)
         yield UserMessageEvent(text=text, target_agent_code=agent_code)
 
         memory_session = Z3r0Session(
             session_id=self.session_id,
             engine=get_engine(),
             viewing_agent_code=agent_code,
-            agent_code_to_name=self._registry.code_to_name(),
+            agent_code_to_name=graph.code_to_name(),
         )
         # main and nested SDK streams converge into one queue
         queue: asyncio.Queue[AgentEventSchema | None] = asyncio.Queue()
@@ -144,6 +163,33 @@ class AgentSession:
                     pass
             await _flush_partial_context(result_holder["result"], memory_session, buffers)
 
+    def _ensure_agent_graph(self, agent_code: str, context: AgentRuntimeContext) -> SessionAgentGraph:
+        tool_snapshot = AgentToolSnapshot.from_context(context)
+        if (
+            self._agent_graph is None
+            or self._main_agent_code != agent_code
+            or self._tool_snapshot != tool_snapshot
+        ):
+            self._dispose_agent_graph()
+            self._main_agent_code = agent_code
+            self._tool_snapshot = tool_snapshot
+            self._agent_graph = self._registry.bind(tool_snapshot)
+            logger.debug(
+                "agent graph bound session=%s agent=%s sandbox=%s generation=%d",
+                self.session_id,
+                agent_code,
+                tool_snapshot.sandbox_container_id,
+                tool_snapshot.sandbox_container_generation,
+            )
+        return self._agent_graph
+
+    def _dispose_agent_graph(self) -> None:
+        if self._agent_graph is None:
+            return
+        self._agent_graph.close()
+        self._agent_graph = None
+        self._main_agent_code = ""
+
 
 @dataclass
 class _PooledSession:
@@ -185,7 +231,7 @@ class AgentSessionPool:
 
         entries = list(self._pool.values())
         self._pool.clear()
-        await asyncio.gather(*(entry.session.interrupt() for entry in entries), return_exceptions=True)
+        await asyncio.gather(*(entry.session.shutdown() for entry in entries), return_exceptions=True)
         logger.debug("agent pool stopped")
 
     def get_or_create(self, session_id: str) -> AgentSession:
@@ -203,7 +249,7 @@ class AgentSessionPool:
         entry = self._pool.pop(session_id, None)
         if entry is None:
             return
-        await entry.session.interrupt()
+        await entry.session.shutdown()
         logger.debug("agent pool discarded session=%s", session_id)
 
     async def try_interrupt(self, session_id: str) -> bool:
@@ -211,6 +257,19 @@ class AgentSessionPool:
         if entry is None:
             return False
         return await entry.session.interrupt()
+
+    async def invalidate_tool_bindings(self, container_id: int | None = None) -> None:
+        entries = [
+            entry for entry in self._pool.values()
+            if container_id is None or entry.session.uses_sandbox_container(container_id)
+        ]
+        if not entries:
+            return
+        await asyncio.gather(
+            *(entry.session.invalidate_tool_binding() for entry in entries),
+            return_exceptions=True,
+        )
+        logger.debug("agent pool invalidated tool bindings container=%s count=%d", container_id, len(entries))
 
     async def _sweep_loop(self) -> None:
         while True:
@@ -230,7 +289,8 @@ class AgentSessionPool:
             if not entry.session.is_running() and now - entry.last_used_at > self._ttl
         ]
         for sid in expired:
-            del self._pool[sid]
+            entry = self._pool.pop(sid)
+            entry.session.close()
             logger.debug("agent pool evicted idle session=%s", sid)
 
     def _enforce_capacity(self) -> None:
@@ -243,7 +303,8 @@ class AgentSessionPool:
             key=lambda kv: kv[1].last_used_at,
         )
         for sid, _ in idle[:overflow]:
-            del self._pool[sid]
+            entry = self._pool.pop(sid)
+            entry.session.close()
             logger.debug("agent pool evicted LRU session=%s", sid)
 
 

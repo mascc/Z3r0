@@ -25,31 +25,45 @@ from schema.agent_session_schema import (
 )
 from schema.response_schema import CommonResponse
 from service import agent_session_service
-from service.sandbox_container_service import can_use_sandbox_container
+from service.sandbox_container_service import resolve_sandbox_container_tool_binding
 
 
 logger = get_logger(__name__)
 
 
-async def create_agent_session_handler() -> CommonResponse:
-    session_id = agent_session_service.create_session()
+async def create_agent_session_handler(user: AuthUser) -> CommonResponse:
+    session_id = await agent_session_service.create_session(user_id=user.id)
     return CommonResponse(data=CreateAgentSessionResponse(session_id=session_id))
 
 
-async def delete_agent_session_handler(session_id: str) -> CommonResponse:
-    deleted = await agent_session_service.delete_session(session_id)
+async def delete_agent_session_handler(session_id: str, user: AuthUser) -> CommonResponse:
+    deleted = await agent_session_service.delete_session(
+        session_id,
+        user_id=user.id,
+        user_role=user.role,
+    )
     if not deleted:
         return CommonResponse(code=HTTPStatus.NOT_FOUND.value, message="agent session not found")
     return CommonResponse(message="agent session deleted")
 
 
-async def list_agent_sessions_handler(limit: int) -> CommonResponse:
-    sessions = await agent_session_service.list_sessions(limit=limit)
+async def list_agent_sessions_handler(limit: int, user: AuthUser) -> CommonResponse:
+    sessions = await agent_session_service.list_sessions(
+        limit=limit,
+        user_id=user.id,
+        user_role=user.role,
+    )
     return CommonResponse(data=ListAgentSessionsResponse(items=sessions))
 
 
-async def list_agent_events_handler(session_id: str) -> CommonResponse:
-    events = await agent_session_service.replay_session_events(session_id=session_id)
+async def list_agent_events_handler(session_id: str, user: AuthUser) -> CommonResponse:
+    events = await agent_session_service.replay_session_events(
+        session_id=session_id,
+        user_id=user.id,
+        user_role=user.role,
+    )
+    if events is None:
+        return CommonResponse(code=HTTPStatus.NOT_FOUND.value, message="agent session not found")
     return CommonResponse(data=ListAgentEventsResponse(session_id=session_id, items=events))
 
 
@@ -72,7 +86,7 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
                 continue
 
             if command.action == AgentStreamActionSchema.INTERRUPT:
-                await _interrupt_turn(websocket, session_id, runner)
+                await _interrupt_turn(websocket, session_id, runner, user)
                 runner = None
                 continue
 
@@ -105,13 +119,17 @@ async def _run_turn(
     requested_agent_code: str | None,
 ) -> None:
     # always emits a DoneEvent so the client exits streaming
-    agent_code = await agent_session_service.ensure_chat_session_meta(
-        session_id, text, requested_agent_code,
-    )
-    context = await _build_runtime_context(session_id, user, sandbox_container_id)
-    runtime = get_agent_pool().get_or_create(session_id)
     saw_done = False
     try:
+        agent_code = await agent_session_service.ensure_chat_session_meta(
+            session_id,
+            text,
+            requested_agent_code,
+            user_id=user.id,
+            user_role=user.role,
+        )
+        context = await _build_runtime_context(session_id, user, sandbox_container_id)
+        runtime = get_agent_pool().get_or_create(session_id)
         async for event in runtime.stream_turn(text, agent_code, context):
             if isinstance(event, DoneEvent):
                 saw_done = True
@@ -119,6 +137,8 @@ async def _run_turn(
                 return
     except asyncio.CancelledError:
         raise
+    except PermissionError:
+        await _send_event(websocket, ErrorEvent(message="agent session not found", code="not_found"))
     except Exception as exc:
         logger.exception("agent turn failed for session=%s", session_id)
         await _send_event(websocket, ErrorEvent(message=str(exc) or "agent turn failed"))
@@ -127,7 +147,17 @@ async def _run_turn(
             await _send_event(websocket, DoneEvent())
 
 
-async def _interrupt_turn(websocket: WebSocket, session_id: str, runner: asyncio.Task | None) -> None:
+async def _interrupt_turn(
+    websocket: WebSocket,
+    session_id: str,
+    runner: asyncio.Task | None,
+    user: AuthUser,
+) -> None:
+    if not await agent_session_service.can_access_session(session_id, user.id, user.role):
+        await _send_event(websocket, ErrorEvent(message="agent session not found", code="not_found"))
+        await _send_event(websocket, DoneEvent())
+        return
+
     had_local_runner = runner is not None and not runner.done()
     interrupted = await get_agent_pool().try_interrupt(session_id)
     await _cancel_task(runner)
@@ -172,12 +202,16 @@ async def _build_runtime_context(
     sandbox_container_id: int | None,
 ) -> AgentRuntimeContext:
     selected_container_id = None
-    if sandbox_container_id is not None and await can_use_sandbox_container(
-        id=sandbox_container_id,
-        user_id=user.id,
-        user_role=user.role,
-    ):
-        selected_container_id = sandbox_container_id
+    selected_container_generation = 0
+    if sandbox_container_id is not None:
+        binding = await resolve_sandbox_container_tool_binding(
+            id=sandbox_container_id,
+            user_id=user.id,
+            user_role=user.role,
+        )
+        if binding is not None:
+            selected_container_id = binding.id
+            selected_container_generation = binding.generation
 
     return AgentRuntimeContext(
         session_id=session_id,
@@ -188,6 +222,7 @@ async def _build_runtime_context(
             role=user.role,
         ),
         sandbox_container_id=selected_container_id,
+        sandbox_container_generation=selected_container_generation,
     )
 
 

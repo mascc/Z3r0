@@ -1,5 +1,5 @@
 import { Button, TextArea } from "@douyinfe/semi-ui";
-import { AtSign, Send, Square, X } from "lucide-react";
+import { ArrowDown, AtSign, Send, Square, X } from "lucide-react";
 import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentMentionPicker, filterAgents } from "./AgentMentionPicker";
 import type { AgentInfo } from "../../shared/api/types";
@@ -9,7 +9,9 @@ type ComposerProps = {
   disabled?: boolean;
   agents: AgentInfo[];
   activeAgentCode: string;
+  showScrollToLatest?: boolean;
   onPickAgent: (code: string) => void;
+  onScrollToLatest?: () => void;
   onSend: (text: string) => void;
   onInterrupt: () => void;
 };
@@ -22,7 +24,9 @@ export function Composer({
   disabled = false,
   agents,
   activeAgentCode,
+  showScrollToLatest = false,
   onPickAgent,
+  onScrollToLatest,
   onSend,
   onInterrupt,
 }: ComposerProps) {
@@ -202,6 +206,16 @@ export function Composer({
           >
             {action.label}
           </Button>
+          {showScrollToLatest ? (
+            <Button
+              className="composer-scroll-tail"
+              icon={<ArrowDown size={16} />}
+              theme="solid"
+              type="tertiary"
+              onClick={onScrollToLatest}
+              aria-label="Scroll to latest message"
+            />
+          ) : null}
           {showPicker ? (
             <Button
               icon={<X size={14} />}

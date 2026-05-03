@@ -8,6 +8,7 @@ from database import get_async_session
 from logger import get_logger
 from model.work_project_model import WorkProject
 from schema.work_project_schema import WorkProjectStatus, WorkProjectType
+from schema.system_user_schema import SystemUserRole
 from service.agent_session_service import delete_session, materialize_project_session_in_tx
 
 
@@ -16,6 +17,7 @@ logger = get_logger(__name__)
 
 async def create_work_project(
     name: str,
+    owner_id: int,
     description: str = "",
     type: WorkProjectType = WorkProjectType.PENETRATION_TEST,
 ) -> WorkProject:
@@ -32,7 +34,7 @@ async def create_work_project(
 
     async with get_async_session() as session:
         session.add(work_project)
-        await materialize_project_session_in_tx(session, work_project.session_id)
+        await materialize_project_session_in_tx(session, work_project.session_id, owner_id=owner_id)
         await session.commit()
         await session.refresh(work_project)
 
@@ -66,7 +68,7 @@ async def delete_work_project(id: int) -> bool:
             return False
         session_id = work_project.session_id
 
-    return await delete_session(session_id)
+    return await delete_session(session_id, user_role=SystemUserRole.ADMIN)
 
 
 async def retry_work_project(id: int) -> tuple[WorkProject | None, bool]:

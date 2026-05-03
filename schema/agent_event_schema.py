@@ -116,7 +116,14 @@ AgentEventSchema = Annotated[
 class AgentStreamSendCommand(BaseModel):
     action: Literal[AgentStreamActionSchema.SEND] = AgentStreamActionSchema.SEND
     text: str
-    sandbox_container_id: int | None = Field(default=None, gt=0)
+    sandbox_container_id: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Selected running sandbox container. Backend mounts sandbox tools "
+            "only when this container is still usable by the current user."
+        ),
+    )
     # optional @-mention override; null => keep the session's sticky agent
     agent_code: str | None = Field(default=None)
 

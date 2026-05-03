@@ -27,6 +27,7 @@ from router.system_user_router import router as system_user_router
 from router.work_project_router import router as work_project_router
 from schema.system_user_schema import SystemUserRole
 from service.sandbox_container_service import (
+    invalidate_all_agent_tool_bindings,
     start_sandbox_container_status_monitor,
     stop_sandbox_container_status_monitor,
 )
@@ -89,6 +90,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         raise
     finally:
         await stop_sandbox_container_status_monitor()
+        await invalidate_all_agent_tool_bindings()
         await get_agent_pool().stop()
         await close_engine()
 

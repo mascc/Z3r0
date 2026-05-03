@@ -14,6 +14,7 @@ from model.agent_session_meta_model import AgentSessionMeta
 from model.work_project_model import WorkProject
 from schema.agent_event_schema import AgentContentEventSchema
 from schema.agent_session_schema import AgentSessionSummarySchema, SessionType
+from schema.system_user_schema import SystemUserRole
 from utils.sdk_tables import BOOTSTRAP_SESSION_ID, agent_messages, agent_sessions
 
 
@@ -22,39 +23,52 @@ logger = get_logger(__name__)
 _TITLE_MAX_LEN = 80
 
 
-def create_session() -> str:
-    return str(uuid4())
+async def create_session(user_id: int) -> str:
+    session_id = str(uuid4())
+    async with get_async_session() as session:
+        await _ensure_sdk_session_row(session, session_id)
+        session.add(AgentSessionMeta(
+            session_id=session_id,
+            session_type=SessionType.CHAT,
+            agent_code=DEFAULT_AGENT_CODE,
+            owner_id=user_id,
+        ))
+        await session.commit()
+    return session_id
 
 
 async def ensure_chat_session_meta(
-    session_id: str, user_text: str, requested_agent_code: str | None,
+    session_id: str,
+    user_text: str,
+    requested_agent_code: str | None,
+    user_id: int,
+    user_role: SystemUserRole,
 ) -> str:
     # resolution: override > sticky > default
     valid = set(get_agent_registry().codes())
     override = requested_agent_code if requested_agent_code in valid else None
 
     async with get_async_session() as session:
-        await _ensure_sdk_session_row(session, session_id)
         meta = await session.get(AgentSessionMeta, session_id)
+        if meta is None or not _can_access_meta(meta, user_id, user_role):
+            raise PermissionError("agent session not found")
         existing = meta.agent_code if meta and meta.agent_code in valid else None
         resolved = override or existing or DEFAULT_AGENT_CODE
 
-        if meta is None:
-            session.add(AgentSessionMeta(
-                session_id=session_id,
-                session_type=SessionType.CHAT,
-                title=_truncate(user_text),
-                agent_code=resolved,
-            ))
-        elif meta.agent_code != resolved:
+        if meta.agent_code != resolved:
             meta.agent_code = resolved
+            if not meta.title:
+                meta.title = _truncate(user_text)
+            session.add(meta)
+        elif not meta.title:
+            meta.title = _truncate(user_text)
             session.add(meta)
         await session.commit()
 
     return resolved
 
 
-async def materialize_project_session_in_tx(session: AsyncSession, session_id: str) -> None:
+async def materialize_project_session_in_tx(session: AsyncSession, session_id: str, owner_id: int) -> None:
     if not session_id:
         return
     await _ensure_sdk_session_row(session, session_id)
@@ -64,36 +78,50 @@ async def materialize_project_session_in_tx(session: AsyncSession, session_id: s
             session_id=session_id,
             session_type=SessionType.PROJECT,
             agent_code=DEFAULT_AGENT_CODE,
+            owner_id=owner_id,
         ))
         return
     meta.session_type = SessionType.PROJECT
+    meta.owner_id = owner_id
     session.add(meta)
 
 
-async def list_sessions(limit: int = 100) -> list[AgentSessionSummarySchema]:
+async def list_sessions(
+    limit: int = 100,
+    user_id: int = 0,
+    user_role: SystemUserRole = SystemUserRole.USER,
+) -> list[AgentSessionSummarySchema]:
+    meta_table = AgentSessionMeta.__table__
+    source = agent_sessions.join(
+        meta_table,
+        agent_sessions.c.session_id == meta_table.c.session_id,
+    ).outerjoin(
+        agent_messages,
+        agent_sessions.c.session_id == agent_messages.c.session_id,
+    )
+
+    stmt = (
+        select(
+            agent_sessions.c.session_id,
+            agent_sessions.c.created_at,
+            agent_sessions.c.updated_at,
+            func.count(agent_messages.c.id).label("message_count"),
+        )
+        .select_from(source)
+        .where(agent_sessions.c.session_id != BOOTSTRAP_SESSION_ID)
+        .group_by(
+            agent_sessions.c.session_id,
+            agent_sessions.c.created_at,
+            agent_sessions.c.updated_at,
+        )
+        .order_by(agent_sessions.c.updated_at.desc())
+        .limit(limit)
+    )
+    if user_role != SystemUserRole.ADMIN:
+        stmt = stmt.where(meta_table.c.owner_id == user_id)
+
     async with get_async_session() as session:
-        rows = (await session.execute(
-            select(
-                agent_sessions.c.session_id,
-                agent_sessions.c.created_at,
-                agent_sessions.c.updated_at,
-                func.count(agent_messages.c.id).label("message_count"),
-            )
-            .select_from(
-                agent_sessions.outerjoin(
-                    agent_messages,
-                    agent_sessions.c.session_id == agent_messages.c.session_id,
-                )
-            )
-            .where(agent_sessions.c.session_id != BOOTSTRAP_SESSION_ID)
-            .group_by(
-                agent_sessions.c.session_id,
-                agent_sessions.c.created_at,
-                agent_sessions.c.updated_at,
-            )
-            .order_by(agent_sessions.c.updated_at.desc())
-            .limit(limit)
-        )).all()
+        rows = (await session.execute(stmt)).all()
         if not rows:
             return []
 
@@ -114,6 +142,7 @@ async def list_sessions(limit: int = 100) -> list[AgentSessionSummarySchema]:
             session_type=session_type,
             title=_resolve_title(session_type, meta, projects.get(row.session_id)),
             agent_code=meta.agent_code if meta else "",
+            owner_id=meta.owner_id if meta else 0,
             message_count=row.message_count or 0,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -121,9 +150,15 @@ async def list_sessions(limit: int = 100) -> list[AgentSessionSummarySchema]:
     return summaries
 
 
-async def replay_session_events(session_id: str) -> list[AgentContentEventSchema]:
+async def replay_session_events(
+    session_id: str,
+    user_id: int,
+    user_role: SystemUserRole,
+) -> list[AgentContentEventSchema] | None:
     # nested-call items are tagged so the UI re-attaches them to the parent ToolCard
     async with get_async_session() as session:
+        if not await _can_access_session(session, session_id, user_id, user_role):
+            return None
         stored_items = await fetch_stored_items(session, session_id)
 
     code_to_name = get_agent_registry().code_to_name()
@@ -140,9 +175,22 @@ async def replay_session_events(session_id: str) -> list[AgentContentEventSchema
     return events
 
 
-async def delete_session(session_id: str) -> bool:
+async def can_access_session(session_id: str, user_id: int, user_role: SystemUserRole) -> bool:
+    async with get_async_session() as session:
+        return await _can_access_session(session, session_id, user_id, user_role)
+
+
+async def delete_session(
+    session_id: str,
+    user_id: int = 0,
+    user_role: SystemUserRole = SystemUserRole.USER,
+) -> bool:
     if not session_id:
         return False
+
+    async with get_async_session() as session:
+        if not await _can_access_session(session, session_id, user_id, user_role):
+            return False
 
     await get_agent_pool().discard(session_id)
 
@@ -186,6 +234,20 @@ async def _ensure_sdk_session_row(session: AsyncSession, session_id: str) -> Non
         ),
         {"sid": session_id},
     )
+
+
+async def _can_access_session(
+    session: AsyncSession,
+    session_id: str,
+    user_id: int,
+    user_role: SystemUserRole,
+) -> bool:
+    meta = await session.get(AgentSessionMeta, session_id)
+    return meta is not None and _can_access_meta(meta, user_id, user_role)
+
+
+def _can_access_meta(meta: AgentSessionMeta, user_id: int, user_role: SystemUserRole) -> bool:
+    return user_role == SystemUserRole.ADMIN or meta.owner_id == user_id
 
 
 def _truncate(value: str) -> str:

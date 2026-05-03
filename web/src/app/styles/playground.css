@@ -248,7 +248,7 @@
 
 .composer-row {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
+  grid-template-columns: max-content minmax(0, 1fr) max-content max-content max-content;
   align-items: flex-end;
   gap: 10px;
 }
@@ -282,6 +282,10 @@
 .composer-agent-chip:hover {
   background: linear-gradient(135deg, rgba(217, 45, 58, 0.16), rgba(217, 45, 58, 0.06));
   border-color: rgba(217, 45, 58, 0.42);
+}
+
+.composer-scroll-tail {
+  width: 40px;
 }
 
 .composer-picker {

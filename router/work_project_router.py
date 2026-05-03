@@ -7,10 +7,11 @@ from handler.work_project_handler import (
     query_work_projects_handler,
     retry_work_project_handler,
 )
-from middleware.auth import require_admin
+from middleware.auth import AuthUser, require_admin
 from router._responses import BAD_REQUEST_RESPONSE, COMMON_ERROR_RESPONSES, not_found_response
 from schema.response_schema import CommonResponse
 from schema.work_project_schema import (
+    CreateWorkProjectRequest,
     DeleteWorkProjectResponse,
     QueryWorkProjectsResponse,
     WorkProjectSchema,
@@ -34,9 +35,16 @@ async def query_work_projects_route(
     return await query_work_projects_handler(page=page, size=size, keyword=keyword)
 
 
+async def create_work_project_route(
+    request: CreateWorkProjectRequest,
+    user: AuthUser = Depends(require_admin),
+) -> CommonResponse[WorkProjectSchema]:
+    return await create_work_project_handler(request=request, user=user)
+
+
 router.add_api_route(
     "",
-    create_work_project_handler,
+    create_work_project_route,
     methods=["POST"],
     response_model=CommonResponse[WorkProjectSchema],
     responses=COMMON_ERROR_RESPONSES,

@@ -114,7 +114,7 @@ class Z3r0Session(SQLAlchemySession):
 
     def _project(self, stored_items: Iterable[StoredItem]) -> Iterable[TResponseInputItem]:
         # Projection rules (viewer = agent about to receive input):
-        #   1. nested-call items: only the owner sees them
+        #   1. nested-call runs are isolated to their own call id
         #   2. user-role items: every viewer sees verbatim
         #   3. items owned by viewer: verbatim
         #   4. other agents' assistant messages: merged into one "[other agent: <name>]" block
@@ -122,6 +122,16 @@ class Z3r0Session(SQLAlchemySession):
         viewer = self._viewing_agent_code
         pending_owner: str = ""
         pending_texts: list[str] = []
+
+        if self._nested_for:
+            for stored in stored_items:
+                if (
+                    stored.owner_code == viewer
+                    and stored.nested_for == self._nested_for
+                    and stored.nested_call_id == self._nested_call_id
+                ):
+                    yield stored.item
+            return
 
         def flush() -> TResponseInputItem | None:
             nonlocal pending_owner, pending_texts
@@ -141,10 +151,6 @@ class Z3r0Session(SQLAlchemySession):
             item_type = item.get("type")
 
             if nested_for:
-                if owner == viewer:
-                    if (m := flush()) is not None:
-                        yield m
-                    yield item
                 continue
 
             if role == "user":

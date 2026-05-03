@@ -1,5 +1,8 @@
 import asyncio
+import shlex
 import socket as py_socket
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import uuid4
@@ -29,7 +32,11 @@ _SHELL_CANDIDATES = (("/bin/bash", "-l"), ("/bin/sh",))
 _DEFAULT_SHELL_ROWS = 24
 _DEFAULT_SHELL_COLS = 80
 _STATUS_MONITOR_INTERVAL_SECONDS = 5
+_TOOL_BINDING_INSPECT_TTL_SECONDS = 3
+_COMMAND_CANCEL_JOIN_TIMEOUT_SECONDS = 3
+_COMMAND_TERMINATE_TIMEOUT_SECONDS = 5
 _status_monitor_task: asyncio.Task[None] | None = None
+_tool_binding_state_cache: dict[int, "_DockerStateCacheEntry"] = {}
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,16 @@ class SandboxContainerCommandResult:
 
 
 @dataclass(frozen=True)
+class SandboxContainerToolBinding:
+    id: int
+    generation: int
+
+
+class _SandboxCommandCancelled(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
 class _ContainerStatusSnapshot:
     id: int
     container_hash: str
@@ -64,6 +81,14 @@ class _ContainerStatusSnapshot:
 class _DockerContainerState:
     exists: bool
     status: str = ""
+
+
+@dataclass(frozen=True)
+class _DockerStateCacheEntry:
+    container_hash: str
+    generation: int
+    state: _DockerContainerState
+    expires_at: float
 
 
 @dataclass
@@ -187,31 +212,254 @@ def _remove_container_sync(container_hash: str) -> None:
         client.close()
 
 
-def _execute_container_command_sync(container_hash: str, command: str) -> SandboxContainerCommandResult:
+class _RunningContainerCommand:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stream: object | None = None
+        self._closed = False
+
+    def set_stream(self, stream: object) -> None:
+        with self._lock:
+            if self._closed:
+                close_now = True
+            else:
+                self._stream = stream
+                close_now = False
+        if close_now:
+            _close_command_stream(stream)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            stream, self._stream = self._stream, None
+        if stream is not None:
+            _close_command_stream(stream)
+
+
+async def _execute_container_command(
+    container_hash: str,
+    command: str,
+) -> SandboxContainerCommandResult:
+    marker_path = f"/tmp/z3r0-command-{uuid4().hex}.pid"
+    cancel_requested = threading.Event()
+    running_command = _RunningContainerCommand()
+    command_task = asyncio.create_task(
+        asyncio.to_thread(
+            _execute_container_command_sync,
+            container_hash,
+            command,
+            marker_path,
+            cancel_requested,
+            running_command,
+        ),
+        name="sandbox-container-command",
+    )
+    try:
+        return await asyncio.shield(command_task)
+    except asyncio.CancelledError:
+        cancel_requested.set()
+        running_command.close()
+        await _terminate_container_command(container_hash, marker_path)
+        await _drain_cancelled_command_task(command_task, container_hash)
+        raise
+
+
+async def _terminate_container_command(container_hash: str, marker_path: str) -> None:
+    terminate_task = asyncio.create_task(
+        asyncio.to_thread(_terminate_container_command_sync, container_hash, marker_path),
+        name="sandbox-container-command-terminate",
+    )
+    try:
+        await asyncio.wait_for(asyncio.shield(terminate_task), timeout=_COMMAND_TERMINATE_TIMEOUT_SECONDS + 1)
+    except asyncio.TimeoutError:
+        logger.warning("sandbox container command termination timed out: %s", container_hash)
+        _consume_background_task(terminate_task)
+    except docker.errors.NotFound:
+        logger.info("sandbox container absent while cancelling command: %s", container_hash)
+    except asyncio.CancelledError:
+        _consume_background_task(terminate_task)
+        raise
+    except Exception:
+        logger.warning("sandbox container command termination failed: %s", container_hash, exc_info=True)
+
+
+async def _drain_cancelled_command_task(task: asyncio.Task, container_hash: str) -> None:
+    if task.done():
+        _consume_background_task(task)
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=_COMMAND_CANCEL_JOIN_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("sandbox container command did not exit after cancellation: %s", container_hash)
+        _consume_background_task(task)
+    except asyncio.CancelledError:
+        _consume_background_task(task)
+        raise
+    except _SandboxCommandCancelled:
+        pass
+    except Exception:
+        logger.debug("sandbox container command exited after cancellation with an error", exc_info=True)
+
+
+def _consume_background_task(task: asyncio.Task) -> None:
+    if task.done():
+        _discard_background_task_result(task)
+        return
+    task.add_done_callback(_discard_background_task_result)
+
+
+def _discard_background_task_result(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except _SandboxCommandCancelled:
+        pass
+    except Exception:
+        logger.debug("background sandbox command task failed", exc_info=True)
+
+
+def _execute_container_command_sync(
+    container_hash: str,
+    command: str,
+    marker_path: str,
+    cancel_requested: threading.Event,
+    running_command: _RunningContainerCommand,
+) -> SandboxContainerCommandResult:
     client = docker.from_env()
+    stream: object | None = None
+    try:
+        if cancel_requested.is_set():
+            raise _SandboxCommandCancelled()
+        container = client.containers.get(container_hash)
+        exec_response = client.api.exec_create(
+            container=container.id,
+            cmd=["/bin/sh", "-lc", _wrap_cancellable_command(command, marker_path)],
+            stdout=True,
+            stderr=True,
+            stdin=False,
+            tty=False,
+        )
+        exec_id = str(exec_response["Id"])
+        if cancel_requested.is_set():
+            raise _SandboxCommandCancelled()
+        stream = client.api.exec_start(exec_id, stream=True, demux=True)
+        running_command.set_stream(stream)
+
+        stdout_parts: list[bytes | str] = []
+        stderr_parts: list[bytes | str] = []
+        try:
+            for chunk in stream:
+                if cancel_requested.is_set():
+                    raise _SandboxCommandCancelled()
+                stdout, stderr = _split_command_output_chunk(chunk)
+                if stdout:
+                    stdout_parts.append(stdout)
+                if stderr:
+                    stderr_parts.append(stderr)
+        except Exception:
+            if cancel_requested.is_set():
+                raise _SandboxCommandCancelled()
+            raise
+        if cancel_requested.is_set():
+            raise _SandboxCommandCancelled()
+
+        inspect_result = client.api.exec_inspect(exec_id)
+        exit_code = inspect_result.get("ExitCode")
+        return SandboxContainerCommandResult(
+            output=_decode_command_output_parts(stdout_parts) + _decode_command_output_parts(stderr_parts),
+            exit_code=exit_code if isinstance(exit_code, int) else 1,
+        )
+    finally:
+        running_command.close()
+        client.close()
+
+
+def _terminate_container_command_sync(container_hash: str, marker_path: str) -> None:
+    client = docker.from_env(timeout=_COMMAND_TERMINATE_TIMEOUT_SECONDS)
     try:
         container = client.containers.get(container_hash)
-        result = container.exec_run(
-            cmd=["/bin/sh", "-lc", command],
+        container.exec_run(
+            cmd=["/bin/sh", "-lc", _build_command_termination_script(marker_path)],
             stdout=True,
             stderr=True,
             stdin=False,
             tty=False,
             demux=True,
         )
-        stdout: bytes | str | None = None
-        stderr: bytes | str | None = None
-        if isinstance(result.output, tuple):
-            stdout, stderr = result.output
-        else:
-            stdout = result.output
-        exit_code = result.exit_code if isinstance(result.exit_code, int) else 1
-        return SandboxContainerCommandResult(
-            output=_decode_command_output(stdout) + _decode_command_output(stderr),
-            exit_code=exit_code,
-        )
     finally:
         client.close()
+
+
+def _close_command_stream(stream: object) -> None:
+    close = getattr(stream, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.debug("failed to close sandbox command stream", exc_info=True)
+
+
+def _split_command_output_chunk(chunk: object) -> tuple[bytes | str | None, bytes | str | None]:
+    if isinstance(chunk, tuple):
+        stdout = chunk[0] if len(chunk) > 0 else None
+        stderr = chunk[1] if len(chunk) > 1 else None
+        return stdout, stderr
+    if isinstance(chunk, (bytes, str)):
+        return chunk, None
+    return None, None
+
+
+def _decode_command_output_parts(parts: list[bytes | str]) -> str:
+    return "".join(_decode_command_output(part) for part in parts)
+
+
+def _wrap_cancellable_command(command: str, marker_path: str) -> str:
+    marker = shlex.quote(marker_path)
+    quoted_command = shlex.quote(command)
+    group_inner = (
+        f"rm -f {marker}; "
+        f"printf '%s' \"$$\" > {marker}; "
+        f"/bin/sh -lc {quoted_command} & "
+        "pid=$!; wait \"$pid\"; code=$?; "
+        f"rm -f {marker}; "
+        "exit \"$code\""
+    )
+    child_inner = (
+        f"rm -f {marker}; "
+        f"/bin/sh -lc {quoted_command} & "
+        "pid=$!; "
+        f"printf '%s' \"$pid\" > {marker}; "
+        "wait \"$pid\"; code=$?; "
+        f"rm -f {marker}; "
+        "exit \"$code\""
+    )
+    return (
+        "if command -v setsid >/dev/null 2>&1 "
+        "&& setsid -w /bin/sh -lc 'exit 0' >/dev/null 2>&1; then "
+        f"exec setsid -w /bin/sh -lc {shlex.quote(group_inner)}; "
+        "else "
+        f"exec /bin/sh -lc {shlex.quote(child_inner)}; "
+        "fi"
+    )
+
+
+def _build_command_termination_script(marker_path: str) -> str:
+    marker = shlex.quote(marker_path)
+    return (
+        "pid=''; "
+        "for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do "
+        f"pid=$(cat {marker} 2>/dev/null || true); "
+        "[ -n \"$pid\" ] && break; "
+        "sleep 0.1; "
+        "done; "
+        f"rm -f {marker}; "
+        "if [ -n \"$pid\" ]; then "
+        "kill -TERM -\"$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true; "
+        "sleep 0.5; "
+        "kill -KILL -\"$pid\" 2>/dev/null || kill -KILL \"$pid\" 2>/dev/null || true; "
+        "fi"
+    )
 
 
 def _decode_command_output(output: bytes | str | None) -> str:
@@ -252,7 +500,78 @@ async def _save_sandbox_container_status(
         session.add(sandbox_container)
         await session.commit()
 
+    _schedule_agent_tool_invalidation(id)
     return await _load_sandbox_container_record(id)
+
+
+def _status_generation(sandbox_container: SandboxContainer) -> int:
+    return int(sandbox_container.updated_at.timestamp() * 1_000_000)
+
+
+def _clear_tool_binding_state_cache(container_id: int | None = None) -> None:
+    if container_id is None:
+        _tool_binding_state_cache.clear()
+        return
+    _tool_binding_state_cache.pop(container_id, None)
+
+
+async def _inspect_container_state_cached(
+    *,
+    id: int,
+    container_hash: str,
+    generation: int,
+) -> _DockerContainerState:
+    now = time.monotonic()
+    cached = _tool_binding_state_cache.get(id)
+    if (
+        cached is not None
+        and cached.container_hash == container_hash
+        and cached.generation == generation
+        and cached.expires_at > now
+    ):
+        return cached.state
+
+    state = await asyncio.to_thread(_inspect_container_state_sync, container_hash)
+    _tool_binding_state_cache[id] = _DockerStateCacheEntry(
+        container_hash=container_hash,
+        generation=generation,
+        state=state,
+        expires_at=now + _TOOL_BINDING_INSPECT_TTL_SECONDS,
+    )
+    return state
+
+
+def _schedule_agent_tool_invalidation(container_id: int) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("no running loop for agent tool invalidation: %s", container_id)
+        return
+
+    loop.create_task(
+        _invalidate_agent_tool_bindings(container_id),
+        name=f"agent-tool-invalidate-{container_id}",
+    )
+
+
+async def _invalidate_agent_tool_bindings(container_id: int) -> None:
+    _clear_tool_binding_state_cache(container_id)
+    try:
+        from core.runtime import get_agent_pool
+
+        await get_agent_pool().invalidate_tool_bindings(container_id)
+    except Exception:
+        logger.exception("agent tool binding invalidation failed: %s", container_id)
+
+
+async def _invalidate_all_agent_tool_bindings() -> None:
+    _clear_tool_binding_state_cache()
+    try:
+        from core.runtime import get_agent_pool
+
+        await get_agent_pool().invalidate_tool_bindings()
+    except Exception:
+        logger.exception("agent tool binding invalidation failed")
 
 
 def _docker_status_to_sandbox_status(status: str) -> SandboxContainerStatus:
@@ -336,6 +655,10 @@ async def stop_sandbox_container_status_monitor() -> None:
     except asyncio.CancelledError:
         pass
     logger.info("sandbox container status monitor stopped")
+
+
+async def invalidate_all_agent_tool_bindings() -> None:
+    await _invalidate_all_agent_tool_bindings()
 
 
 async def create_sandbox_container(
@@ -529,6 +852,7 @@ async def delete_sandbox_container(id: int) -> bool:
         await session.delete(sandbox_container)
         await session.commit()
 
+    await _invalidate_agent_tool_bindings(id)
     logger.info("sandbox container deleted: %s", id)
     return True
 
@@ -611,19 +935,38 @@ async def query_available_sandbox_containers(
         ]
 
 
-async def can_use_sandbox_container(
+async def resolve_sandbox_container_tool_binding(
     id: int,
     user_id: int,
     user_role: SystemUserRole,
-) -> bool:
+) -> SandboxContainerToolBinding | None:
     async with get_async_session() as session:
         sandbox_container = await session.get(SandboxContainer, id)
         if sandbox_container is None:
-            return False
-        return (
-            sandbox_container.status == SandboxContainerStatus.RUNNING
-            and (user_role == SystemUserRole.ADMIN or sandbox_container.owner_id == user_id)
+            return None
+        if sandbox_container.status != SandboxContainerStatus.RUNNING:
+            return None
+        if user_role != SystemUserRole.ADMIN and sandbox_container.owner_id != user_id:
+            return None
+        container_hash = sandbox_container.container_hash
+        generation = _status_generation(sandbox_container)
+
+    try:
+        state = await _inspect_container_state_cached(
+            id=id,
+            container_hash=container_hash,
+            generation=generation,
         )
+    except Exception:
+        logger.exception("sandbox container inspect failed before tool binding: %s", id)
+        return None
+
+    status = SandboxContainerStatus.ERROR if not state.exists else _docker_status_to_sandbox_status(state.status)
+    if status != SandboxContainerStatus.RUNNING:
+        await _save_sandbox_container_status(id, status)
+        return None
+
+    return SandboxContainerToolBinding(id=id, generation=generation)
 
 
 async def resolve_shell_container(container_hash: str) -> SandboxContainer | None:
@@ -825,7 +1168,9 @@ async def execute_sandbox_container_command(id: int, command: str) -> SandboxCon
         raise RuntimeError("sandbox container is not running")
 
     try:
-        return await asyncio.to_thread(_execute_container_command_sync, container_hash, command)
+        return await _execute_container_command(container_hash, command)
+    except asyncio.CancelledError:
+        raise
     except docker.errors.NotFound:
         logger.info("sandbox container instance not found while executing command: %s", id)
         await _save_sandbox_container_status(id, SandboxContainerStatus.ERROR)

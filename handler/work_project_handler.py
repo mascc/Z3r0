@@ -1,5 +1,6 @@
 from http import HTTPStatus
 
+from middleware.auth import AuthUser
 from schema.response_schema import CommonResponse
 from schema.work_project_schema import (
     CreateWorkProjectRequest,
@@ -16,9 +17,10 @@ from service.work_project_service import (
 )
 
 
-async def create_work_project_handler(request: CreateWorkProjectRequest) -> CommonResponse:
+async def create_work_project_handler(request: CreateWorkProjectRequest, user: AuthUser) -> CommonResponse:
     work_project = await create_work_project(
         name=request.name,
+        owner_id=user.id,
         description=request.description,
         type=request.type,
     )

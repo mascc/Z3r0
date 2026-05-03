@@ -14,8 +14,8 @@ export interface paths {
         /** List Agent Sessions Route */
         get: operations["list_agent_sessions_route_api_agent_sessions_get"];
         put?: never;
-        /** Create Agent Session Handler */
-        post: operations["create_agent_session_handler_api_agent_sessions_post"];
+        /** Create Agent Session Route */
+        post: operations["create_agent_session_route_api_agent_sessions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -32,8 +32,8 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Agent Session Handler */
-        delete: operations["delete_agent_session_handler_api_agent_sessions__session_id__delete"];
+        /** Delete Agent Session Route */
+        delete: operations["delete_agent_session_route_api_agent_sessions__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -291,8 +291,8 @@ export interface paths {
         /** Query Work Projects Route */
         get: operations["query_work_projects_route_api_work_projects_get"];
         put?: never;
-        /** Create Work Project Handler */
-        post: operations["create_work_project_handler_api_work_projects_post"];
+        /** Create Work Project Route */
+        post: operations["create_work_project_route_api_work_projects_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -383,6 +383,11 @@ export interface components {
              * @default 0
              */
             message_count: number;
+            /**
+             * Owner Id
+             * @default 0
+             */
+            owner_id: number;
             /** Session Id */
             session_id: string;
             /** @default chat */
@@ -421,6 +426,7 @@ export interface components {
             agent_code: string | null;
             /**
              * Sandbox Container Id
+             * @description Selected running sandbox container. Backend mounts sandbox tools only when this container is still usable by the current user.
              * @default null
              */
             sandbox_container_id: number | null;
@@ -1272,7 +1278,7 @@ export interface operations {
             };
         };
     };
-    create_agent_session_handler_api_agent_sessions_post: {
+    create_agent_session_route_api_agent_sessions_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1310,7 +1316,7 @@ export interface operations {
             };
         };
     };
-    delete_agent_session_handler_api_agent_sessions__session_id__delete: {
+    delete_agent_session_route_api_agent_sessions__session_id__delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -2418,7 +2424,7 @@ export interface operations {
             };
         };
     };
-    create_work_project_handler_api_work_projects_post: {
+    create_work_project_route_api_work_projects_post: {
         parameters: {
             query?: never;
             header?: never;

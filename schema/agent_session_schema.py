@@ -18,6 +18,7 @@ class AgentSessionSummarySchema(BaseModel):
     session_type: SessionType = SessionType.CHAT
     title: str = ""
     agent_code: str = ""
+    owner_id: int = 0
     message_count: int = 0
     created_at: datetime
     updated_at: datetime
