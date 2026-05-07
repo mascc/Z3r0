@@ -13,6 +13,7 @@ import {
   useEffect,
   MutableRefObject,
   useMemo,
+  PointerEvent as ReactPointerEvent,
   useRef,
   useState,
   SetStateAction,
@@ -24,29 +25,29 @@ import type { SandboxContainer } from "../../shared/api/types";
 type ShellStatus = "idle" | "connecting" | "open" | "closed";
 type ShellDockState = "normal" | "minimized";
 
-type ShellWindowState = {
-  connectionKey: number;
-  containerHash: string;
-  containerName: string;
-  dockState: ShellDockState;
-  status: ShellStatus;
-  isMaximized: boolean;
-  restoreRect: ShellRect | null;
+type ShellRect = {
   x: number;
   y: number;
   width: number;
   height: number;
 };
 
-type NoVNCWindowState = {
-  containerId: number;
+type FloatingWindowStateBase = ShellRect & {
   containerName: string;
   dockState: ShellDockState;
+};
+
+type ShellWindowState = FloatingWindowStateBase & {
+  connectionKey: number;
+  containerHash: string;
+  status: ShellStatus;
+  isMaximized: boolean;
+  restoreRect: ShellRect | null;
+};
+
+type NoVNCWindowState = FloatingWindowStateBase & {
+  containerId: number;
   url: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 };
 
 type ContainerShellContextValue = {
@@ -57,16 +58,46 @@ type ContainerShellContextValue = {
 type ShellFlightState = {
   direction: "minimize" | "restore";
   containerName: string;
-  status: ShellStatus;
+  meta: string;
   from: ShellRect;
   to: ShellRect;
 };
 
-type ShellRect = {
+type FloatingWindowDockSlot = "shell" | "novnc";
+
+type WindowDragState = {
   x: number;
   y: number;
-  width: number;
-  height: number;
+  startX: number;
+  startY: number;
+};
+
+type FloatingWindowProps = {
+  actions: ReactNode;
+  children: ReactNode;
+  className?: string;
+  dockState: ShellDockState;
+  icon: ReactNode;
+  isMaximized?: boolean;
+  meta: string;
+  onHeaderPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  rect: ShellRect;
+  resizeHandle?: ReactNode;
+  title: string;
+};
+
+type FloatingWindowFlightProps = {
+  flight: ShellFlightState;
+  frameRef: MutableRefObject<HTMLDivElement | null>;
+  icon: ReactNode;
+  style?: CSSProperties;
+};
+
+type MinimizedWindowButtonProps = {
+  ariaLabel: string;
+  className?: string;
+  icon: ReactNode;
+  onClick: () => void;
 };
 
 type FitTerminalOptions = {
@@ -75,14 +106,19 @@ type FitTerminalOptions = {
 
 const DEFAULT_WIDTH = 760;
 const DEFAULT_HEIGHT = 460;
-const NOVNC_DEFAULT_WIDTH = 1280;
-const NOVNC_DEFAULT_HEIGHT = 762;
+const FLOATING_WINDOW_HEADER_HEIGHT = 42;
+const FLOATING_WINDOW_BORDER_WIDTH = 1;
+const NOVNC_SCREEN_WIDTH = 1280;
+const NOVNC_SCREEN_HEIGHT = 720;
+const NOVNC_DEFAULT_WIDTH = NOVNC_SCREEN_WIDTH + (FLOATING_WINDOW_BORDER_WIDTH * 2);
+const NOVNC_DEFAULT_HEIGHT = NOVNC_SCREEN_HEIGHT + FLOATING_WINDOW_HEADER_HEIGHT + (FLOATING_WINDOW_BORDER_WIDTH * 2);
 const MIN_WIDTH = 420;
 const MIN_HEIGHT = 260;
 const MAXIMIZED_MARGIN = 12;
 const DOCK_BUTTON_RIGHT = 0;
 const DOCK_BUTTON_SIZE = 46;
-const SHELL_DOCK_TRANSITION_MS = 420;
+const DOCK_BUTTON_GAP = 54;
+const WINDOW_DOCK_TRANSITION_MS = 420;
 
 const ContainerShellContext = createContext<ContainerShellContextValue | null>(null);
 
@@ -94,16 +130,19 @@ export function useContainerShell() {
 
 export function ContainerShellProvider({ children }: { children: ReactNode }) {
   const [shell, setShell] = useState<ShellWindowState | null>(null);
-  const [flight, setFlight] = useState<ShellFlightState | null>(null);
+  const [shellFlight, setShellFlight] = useState<ShellFlightState | null>(null);
   const [noVNC, setNoVNC] = useState<NoVNCWindowState | null>(null);
+  const [noVNCFlight, setNoVNCFlight] = useState<ShellFlightState | null>(null);
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const flightRef = useRef<HTMLDivElement | null>(null);
-  const flightFrameRef = useRef<number | null>(null);
-  const dragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
-  const noVNCDragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
+  const shellFlightRef = useRef<HTMLDivElement | null>(null);
+  const shellFlightFrameRef = useRef<number | null>(null);
+  const noVNCFlightRef = useRef<HTMLDivElement | null>(null);
+  const noVNCFlightFrameRef = useRef<number | null>(null);
+  const dragRef = useRef<WindowDragState | null>(null);
+  const noVNCDragRef = useRef<WindowDragState | null>(null);
   const resizeRef = useRef<{ width: number; height: number; startX: number; startY: number } | null>(null);
   const fitWithoutSnapRef = useRef(false);
   const connectionKeyRef = useRef(0);
@@ -119,8 +158,8 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const closeShell = useCallback(() => {
-    cancelFlightFrame(flightFrameRef);
-    setFlight(null);
+    cancelFlightFrame(shellFlightFrameRef);
+    setShellFlight(null);
     disposeShellResources();
     setShell(null);
   }, [disposeShellResources]);
@@ -142,10 +181,10 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
   }, [sendResize]);
 
   const toggleMaximizeShell = useCallback(() => {
-    cancelFlightFrame(flightFrameRef);
+    cancelFlightFrame(shellFlightFrameRef);
     dragRef.current = null;
     resizeRef.current = null;
-    setFlight(null);
+    setShellFlight(null);
     fitWithoutSnapRef.current = true;
     setShell((current) => {
       if (!current) return current;
@@ -165,15 +204,15 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
 
   const minimizeShell = useCallback(() => {
     if (!shell) return;
-    cancelFlightFrame(flightFrameRef);
-    setFlight(buildShellFlight(shell, "minimize"));
+    cancelFlightFrame(shellFlightFrameRef);
+    setShellFlight(buildShellFlight(shell, "minimize"));
     setShell((current) => current ? { ...current, dockState: "minimized" } : current);
   }, [shell]);
 
   const restoreShell = useCallback(() => {
     if (!shell) return;
-    cancelFlightFrame(flightFrameRef);
-    setFlight(buildShellFlight(shell, "restore"));
+    cancelFlightFrame(shellFlightFrameRef);
+    setShellFlight(buildShellFlight(shell, "restore"));
   }, [shell]);
 
   const openShell = useCallback((container: SandboxContainer) => {
@@ -182,8 +221,8 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
     const currentShell = shell;
     if (currentShell?.containerHash === container.container_hash && isSocketActive(socketRef.current)) {
       const preserveGeometry = currentShell.dockState === "minimized";
-      cancelFlightFrame(flightFrameRef);
-      setFlight(null);
+      cancelFlightFrame(shellFlightFrameRef);
+      setShellFlight(null);
       fitWithoutSnapRef.current = preserveGeometry;
       setShell((current) => current ? {
         ...current,
@@ -197,8 +236,8 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    cancelFlightFrame(flightFrameRef);
-    setFlight(null);
+    cancelFlightFrame(shellFlightFrameRef);
+    setShellFlight(null);
     disposeShellResources();
 
     setShell({
@@ -218,21 +257,30 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
   }, [disposeShellResources, fitTerminal, shell]);
 
   const closeNoVNC = useCallback(() => {
+    cancelFlightFrame(noVNCFlightFrameRef);
     noVNCDragRef.current = null;
+    setNoVNCFlight(null);
     setNoVNC(null);
   }, []);
 
   const minimizeNoVNC = useCallback(() => {
+    if (!noVNC) return;
+    cancelFlightFrame(noVNCFlightFrameRef);
+    setNoVNCFlight(buildNoVNCFlight(noVNC, "minimize"));
     setNoVNC((current) => current ? { ...current, dockState: "minimized" } : current);
-  }, []);
+  }, [noVNC]);
 
   const restoreNoVNC = useCallback(() => {
-    setNoVNC((current) => current ? { ...current, dockState: "normal" } : current);
-  }, []);
+    if (!noVNC) return;
+    cancelFlightFrame(noVNCFlightFrameRef);
+    setNoVNCFlight(buildNoVNCFlight(noVNC, "restore"));
+  }, [noVNC]);
 
   const openNoVNC = useCallback((container: SandboxContainer) => {
     try {
       const url = buildContainerNoVNCUrl(container);
+      cancelFlightFrame(noVNCFlightFrameRef);
+      setNoVNCFlight(null);
       setNoVNC((current) => {
         if (current?.containerId === container.id && current.url === url) {
           return { ...current, containerName: container.container_name, dockState: "normal" };
@@ -328,18 +376,31 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => () => closeNoVNC(), [closeNoVNC]);
 
-  useEffect(() => () => cancelFlightFrame(flightFrameRef), []);
+  useEffect(() => () => {
+    cancelFlightFrame(shellFlightFrameRef);
+    cancelFlightFrame(noVNCFlightFrameRef);
+  }, []);
 
   useEffect(() => {
-    if (!flight || !flightRef.current) return;
-    return animateShellFlight(flightRef.current, flight, flightFrameRef, () => {
-      if (flight.direction === "restore") {
+    if (!shellFlight || !shellFlightRef.current) return;
+    return animateWindowFlight(shellFlightRef.current, shellFlight, shellFlightFrameRef, () => {
+      if (shellFlight.direction === "restore") {
         fitWithoutSnapRef.current = true;
         setShell((current) => current ? { ...current, dockState: "normal" } : current);
       }
-      setFlight(null);
+      setShellFlight(null);
     });
-  }, [fitTerminal, flight]);
+  }, [shellFlight]);
+
+  useEffect(() => {
+    if (!noVNCFlight || !noVNCFlightRef.current) return;
+    return animateWindowFlight(noVNCFlightRef.current, noVNCFlight, noVNCFlightFrameRef, () => {
+      if (noVNCFlight.direction === "restore") {
+        setNoVNC((current) => current ? { ...current, dockState: "normal" } : current);
+      }
+      setNoVNCFlight(null);
+    });
+  }, [noVNCFlight]);
 
   useEffect(() => {
     if (!shell || shell.dockState !== "normal") return;
@@ -367,8 +428,7 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
     if (drag) {
       setShell((current) => current ? {
         ...current,
-        x: clamp(drag.x + event.clientX - drag.startX, 8, window.innerWidth - 80),
-        y: clamp(drag.y + event.clientY - drag.startY, 8, window.innerHeight - 80),
+        ...getDraggedWindowPosition(drag, event),
       } : current);
       return;
     }
@@ -377,8 +437,7 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
     if (noVNCDrag) {
       setNoVNC((current) => current ? {
         ...current,
-        x: clamp(noVNCDrag.x + event.clientX - noVNCDrag.startX, 8, window.innerWidth - 80),
-        y: clamp(noVNCDrag.y + event.clientY - noVNCDrag.startY, 8, window.innerHeight - 80),
+        ...getDraggedWindowPosition(noVNCDrag, event),
       } : current);
       return;
     }
@@ -409,90 +468,79 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
   }, [onPointerMove, stopPointerAction]);
 
   const contextValue = useMemo<ContainerShellContextValue>(() => ({ openNoVNC, openShell }), [openNoVNC, openShell]);
-  const shellWindowStyle = shell ? buildShellWindowStyle(shell) : undefined;
-  const shellFlightStyle = flight ? buildShellFlightStyle(flight) : undefined;
-  const shellWindowClassName = shell ? `shell-window${shell.dockState === "minimized" ? " shell-window-hidden" : ""}${shell.isMaximized ? " shell-window-maximized" : ""}` : "shell-window";
-  const noVNCWindowStyle = noVNC ? buildNoVNCWindowStyle(noVNC) : undefined;
-  const noVNCWindowClassName = noVNC ? `shell-window novnc-window${noVNC.dockState === "minimized" ? " shell-window-hidden" : ""}` : "shell-window novnc-window";
+  const shellFlightStyle = shellFlight ? buildWindowFlightStyle(shellFlight) : undefined;
+  const noVNCFlightStyle = noVNCFlight ? buildWindowFlightStyle(noVNCFlight) : undefined;
 
   return (
     <ContainerShellContext.Provider value={contextValue}>
       {children}
       {shell ? (
         <>
-          <div className={shellWindowClassName} style={shellWindowStyle}>
-            <div
-              className="shell-window-header"
-              onPointerDown={(event) => {
-                if (shell.isMaximized) return;
-                dragRef.current = { x: shell.x, y: shell.y, startX: event.clientX, startY: event.clientY };
-              }}
-            >
-              <div className="shell-window-title">
-                <SquareTerminal size={16} />
-                <span>{shell.containerName}</span>
-                <em>{shell.status}</em>
-              </div>
-              <div className="shell-window-actions" onPointerDown={(event) => event.stopPropagation()}>
+          <FloatingWindow
+            actions={(
+              <>
                 <Button icon={<Minus size={14} />} theme="borderless" onClick={minimizeShell} aria-label="Minimize shell" />
                 <Button icon={shell.isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />} theme="borderless" onClick={toggleMaximizeShell} aria-label={shell.isMaximized ? "Restore shell size" : "Maximize shell"} />
                 <Button icon={<X size={14} />} theme="borderless" type="danger" onClick={closeShell} aria-label="Close shell" />
-              </div>
-            </div>
+              </>
+            )}
+            dockState={shell.dockState}
+            icon={<SquareTerminal size={16} />}
+            isMaximized={shell.isMaximized}
+            meta={shell.status}
+            rect={shell}
+            title={shell.containerName}
+            onHeaderPointerDown={(event) => {
+              if (shell.isMaximized) return;
+              dragRef.current = beginWindowDrag(shell, event);
+            }}
+            resizeHandle={(
+              <div
+                className="shell-resize-handle"
+                onPointerDown={(event) => {
+                  if (shell.isMaximized) return;
+                  resizeRef.current = { width: shell.width, height: shell.height, startX: event.clientX, startY: event.clientY };
+                }}
+              />
+            )}
+          >
             <div ref={terminalHostRef} className="shell-terminal" />
-            <div
-              className="shell-resize-handle"
-              onPointerDown={(event) => {
-                if (shell.isMaximized) return;
-                resizeRef.current = { width: shell.width, height: shell.height, startX: event.clientX, startY: event.clientY };
-              }}
-            />
-          </div>
-          {shell.dockState === "minimized" && !flight ? (
-            <button className="shell-minimized-button" type="button" onClick={restoreShell}>
-              <SquareTerminal size={20} />
-            </button>
+          </FloatingWindow>
+          {shell.dockState === "minimized" && !shellFlight ? (
+            <MinimizedWindowButton ariaLabel="Restore shell" icon={<SquareTerminal size={20} />} onClick={restoreShell} />
           ) : null}
-          {flight ? (
-            <div ref={flightRef} className={`shell-flight shell-flight-${flight.direction}`} style={shellFlightStyle}>
-              <div className="shell-flight-header">
-                <SquareTerminal size={15} />
-                <span>{flight.containerName}</span>
-                <em>{flight.status}</em>
-              </div>
-              <div className="shell-flight-body" />
-            </div>
+          {shellFlight ? (
+            <FloatingWindowFlight frameRef={shellFlightRef} flight={shellFlight} icon={<SquareTerminal size={15} />} style={shellFlightStyle} />
           ) : null}
         </>
       ) : null}
       {noVNC ? (
         <>
-          <div className={noVNCWindowClassName} style={noVNCWindowStyle}>
-            <div
-              className="shell-window-header"
-              onPointerDown={(event) => {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                noVNCDragRef.current = { x: noVNC.x, y: noVNC.y, startX: event.clientX, startY: event.clientY };
-              }}
-            >
-              <div className="shell-window-title">
-                <Monitor size={16} />
-                <span>{noVNC.containerName}</span>
-                <em>screen</em>
-              </div>
-              <div className="shell-window-actions" onPointerDown={(event) => event.stopPropagation()}>
+          <FloatingWindow
+            actions={(
+              <>
                 <Button icon={<Minus size={14} />} theme="borderless" onClick={minimizeNoVNC} aria-label="Minimize noVNC" />
                 <Button icon={<X size={14} />} theme="borderless" type="danger" onClick={closeNoVNC} aria-label="Close noVNC" />
-              </div>
-            </div>
+              </>
+            )}
+            dockState={noVNC.dockState}
+            icon={<Monitor size={16} />}
+            meta="screen"
+            rect={noVNC}
+            title={noVNC.containerName}
+            onHeaderPointerDown={(event) => {
+              noVNCDragRef.current = beginWindowDrag(noVNC, event, { capturePointer: true });
+            }}
+          >
             <div className="novnc-body">
               <iframe className="novnc-frame" src={noVNC.url} title={`noVNC ${noVNC.containerName}`} />
             </div>
-          </div>
-          {noVNC.dockState === "minimized" ? (
-            <button className="shell-minimized-button novnc-minimized-button" type="button" onClick={restoreNoVNC}>
-              <Monitor size={20} />
-            </button>
+          </FloatingWindow>
+          {noVNC.dockState === "minimized" && !noVNCFlight ? (
+            <MinimizedWindowButton className="novnc-minimized-button" ariaLabel="Restore noVNC" icon={<Monitor size={20} />} onClick={restoreNoVNC} />
+          ) : null}
+          {noVNCFlight ? (
+            <FloatingWindowFlight frameRef={noVNCFlightRef} flight={noVNCFlight} icon={<Monitor size={15} />} style={noVNCFlightStyle} />
           ) : null}
         </>
       ) : null}
@@ -500,25 +548,113 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
   );
 }
 
+function FloatingWindow({
+  actions,
+  children,
+  className,
+  dockState,
+  icon,
+  isMaximized = false,
+  meta,
+  onHeaderPointerDown,
+  rect,
+  resizeHandle,
+  title,
+}: FloatingWindowProps) {
+  return (
+    <div className={buildWindowClassName(className, dockState, isMaximized)} style={buildWindowStyle(rect)}>
+      <FloatingWindowHeader
+        actions={actions}
+        icon={icon}
+        meta={meta}
+        title={title}
+        onPointerDown={onHeaderPointerDown}
+      />
+      {children}
+      {resizeHandle}
+    </div>
+  );
+}
+
+function FloatingWindowHeader({
+  actions,
+  icon,
+  meta,
+  onPointerDown,
+  title,
+}: Pick<FloatingWindowProps, "actions" | "icon" | "meta" | "title"> & {
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div className="shell-window-header" onPointerDown={onPointerDown}>
+      <div className="shell-window-title">
+        {icon}
+        <span>{title}</span>
+        <em>{meta}</em>
+      </div>
+      <div className="shell-window-actions" onPointerDown={(event) => event.stopPropagation()}>
+        {actions}
+      </div>
+    </div>
+  );
+}
+
+function FloatingWindowFlight({ flight, frameRef, icon, style }: FloatingWindowFlightProps) {
+  return (
+    <div ref={frameRef} className={`shell-flight shell-flight-${flight.direction}`} style={style}>
+      <div className="shell-flight-header">
+        {icon}
+        <span>{flight.containerName}</span>
+        <em>{flight.meta}</em>
+      </div>
+      <div className="shell-flight-body" />
+    </div>
+  );
+}
+
+function MinimizedWindowButton({ ariaLabel, className, icon, onClick }: MinimizedWindowButtonProps) {
+  return (
+    <button className={`shell-minimized-button${className ? ` ${className}` : ""}`} type="button" onClick={onClick} aria-label={ariaLabel}>
+      {icon}
+    </button>
+  );
+}
+
+function buildWindowClassName(className: string | undefined, dockState: ShellDockState, isMaximized: boolean) {
+  return [
+    "shell-window",
+    className,
+    dockState === "minimized" ? "shell-window-hidden" : null,
+    isMaximized ? "shell-window-maximized" : null,
+  ].filter(Boolean).join(" ");
+}
+
+function beginWindowDrag(
+  rect: ShellRect,
+  event: ReactPointerEvent<HTMLDivElement>,
+  options: { capturePointer?: boolean } = {},
+): WindowDragState {
+  if (options.capturePointer) event.currentTarget.setPointerCapture(event.pointerId);
+  return { x: rect.x, y: rect.y, startX: event.clientX, startY: event.clientY };
+}
+
+function getDraggedWindowPosition(drag: WindowDragState, event: PointerEvent) {
+  return {
+    x: clamp(drag.x + event.clientX - drag.startX, 8, window.innerWidth - 80),
+    y: clamp(drag.y + event.clientY - drag.startY, 8, window.innerHeight - 80),
+  };
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
 
-function buildShellWindowStyle(shell: ShellWindowState) {
+function buildWindowStyle(rect: ShellRect) {
   return {
-    left: shell.x,
-    top: shell.y,
-    width: shell.width,
-    height: shell.height,
-  } satisfies CSSProperties;
-}
-
-function buildNoVNCWindowStyle(noVNC: NoVNCWindowState) {
-  return {
-    left: noVNC.x,
-    top: noVNC.y,
-    width: noVNC.width,
-    height: noVNC.height,
+    left: rect.x,
+    top: rect.y,
+    width: rect.width,
+    height: rect.height,
   } satisfies CSSProperties;
 }
 
@@ -534,11 +670,15 @@ function getInitialNoVNCRect(): ShellRect {
 }
 
 function getShellRect(shell: ShellWindowState): ShellRect {
+  return getWindowRect(shell);
+}
+
+function getWindowRect(rect: ShellRect): ShellRect {
   return {
-    x: shell.x,
-    y: shell.y,
-    width: shell.width,
-    height: shell.height,
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
   };
 }
 
@@ -552,18 +692,30 @@ function getMaximizedShellRect(): ShellRect {
 }
 
 function buildShellFlight(shell: ShellWindowState, direction: ShellFlightState["direction"]): ShellFlightState {
-  const shellRect = { x: shell.x, y: shell.y, width: shell.width, height: shell.height };
-  const dockRect = getDockRect();
+  const shellRect = getShellRect(shell);
+  const dockRect = getDockRect("shell");
   return {
     direction,
     containerName: shell.containerName,
-    status: shell.status,
+    meta: shell.status,
     from: direction === "minimize" ? shellRect : dockRect,
     to: direction === "minimize" ? dockRect : shellRect,
   };
 }
 
-function buildShellFlightStyle(flight: ShellFlightState) {
+function buildNoVNCFlight(noVNC: NoVNCWindowState, direction: ShellFlightState["direction"]): ShellFlightState {
+  const noVNCRect = getWindowRect(noVNC);
+  const dockRect = getDockRect("novnc");
+  return {
+    direction,
+    containerName: noVNC.containerName,
+    meta: "screen",
+    from: direction === "minimize" ? noVNCRect : dockRect,
+    to: direction === "minimize" ? dockRect : noVNCRect,
+  };
+}
+
+function buildWindowFlightStyle(flight: ShellFlightState) {
   const base = getFlightBaseRect(flight);
   return {
     left: base.x,
@@ -571,14 +723,14 @@ function buildShellFlightStyle(flight: ShellFlightState) {
     width: base.width,
     height: base.height,
     opacity: getFlightOpacity(flight.direction, 0),
-    transform: buildShellFlightTransform(base, flight.from),
+    transform: buildWindowFlightTransform(base, flight.from),
   } satisfies CSSProperties;
 }
 
-function getDockRect(): ShellRect {
+function getDockRect(slot: FloatingWindowDockSlot): ShellRect {
   return {
     x: window.innerWidth - DOCK_BUTTON_RIGHT - DOCK_BUTTON_SIZE,
-    y: window.innerHeight / 2,
+    y: (window.innerHeight / 2) + (slot === "novnc" ? DOCK_BUTTON_GAP : 0),
     width: DOCK_BUTTON_SIZE,
     height: DOCK_BUTTON_SIZE,
   };
@@ -599,7 +751,7 @@ function cancelFlightFrame(frameRef: MutableRefObject<number | null>) {
   frameRef.current = null;
 }
 
-function animateShellFlight(
+function animateWindowFlight(
   element: HTMLDivElement,
   flight: ShellFlightState,
   frameRef: MutableRefObject<number | null>,
@@ -609,12 +761,12 @@ function animateShellFlight(
   const base = getFlightBaseRect(flight);
 
   const tick = (now: number) => {
-    const progress = clamp((now - startedAt) / SHELL_DOCK_TRANSITION_MS, 0, 1);
+    const progress = clamp((now - startedAt) / WINDOW_DOCK_TRANSITION_MS, 0, 1);
     const eased = easeInOutCubic(progress);
     const rect = interpolateRect(flight.from, flight.to, eased);
 
     element.style.opacity = String(getFlightOpacity(flight.direction, eased));
-    element.style.transform = buildShellFlightTransform(base, rect);
+    element.style.transform = buildWindowFlightTransform(base, rect);
 
     if (progress < 1) {
       frameRef.current = window.requestAnimationFrame(tick);
@@ -633,7 +785,7 @@ function getFlightBaseRect(flight: ShellFlightState) {
   return flight.direction === "restore" ? flight.to : flight.from;
 }
 
-function buildShellFlightTransform(base: ShellRect, rect: ShellRect) {
+function buildWindowFlightTransform(base: ShellRect, rect: ShellRect) {
   const scaleX = rect.width / base.width;
   const scaleY = rect.height / base.height;
   const translateX = rect.x - base.x;

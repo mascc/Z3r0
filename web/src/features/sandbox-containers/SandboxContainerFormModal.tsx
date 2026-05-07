@@ -197,23 +197,23 @@ export function SandboxContainerFormModal({
         />
       </label>
 
-      <div className="novnc-fieldset">
-        <div className="novnc-toggle-row">
-          <span>noVNC</span>
+      <div className="novnc-toggle-row">
+        <span>noVNC</span>
+        <div className="novnc-controls">
           <Switch checked={novncSupport} onChange={toggleNoVNCSupport} aria-label="Enable noVNC" />
+          {novncSupport ? (
+            <label className="novnc-port-field">
+              <span>noVNC Port</span>
+              <Select
+                value={novncPort}
+                disabled={portMappingsLoading || noVNCPortOptions.length === 0}
+                placeholder={noVNCPortOptions.length === 0 ? "No TCP ports mapped" : "Select mapped TCP port"}
+                optionList={noVNCPortOptions}
+                onChange={selectNoVNCPort}
+              />
+            </label>
+          ) : null}
         </div>
-        {novncSupport ? (
-          <label className="novnc-port-field">
-            <span>noVNC Port</span>
-            <Select
-              value={novncPort}
-              disabled={portMappingsLoading || noVNCPortOptions.length === 0}
-              placeholder={noVNCPortOptions.length === 0 ? "No TCP ports mapped" : "Select mapped TCP port"}
-              optionList={noVNCPortOptions}
-              onChange={selectNoVNCPort}
-            />
-          </label>
-        ) : null}
       </div>
 
       <div className="port-mapping-fieldset">

@@ -263,11 +263,6 @@
   white-space: nowrap;
 }
 
-.novnc-fieldset {
-  display: grid;
-  gap: 10px;
-}
-
 .novnc-toggle-row {
   display: flex;
   min-height: 34px;
@@ -279,8 +274,44 @@
   font-weight: 650;
 }
 
+.novnc-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
 .novnc-port-field {
+  display: grid;
+  grid-template-columns: max-content minmax(150px, 180px);
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
   margin: 0;
+}
+
+.novnc-port-field .semi-select {
+  width: 100%;
+}
+
+@media (max-width: 560px) {
+  .novnc-toggle-row,
+  .novnc-controls {
+    align-items: stretch;
+  }
+
+  .novnc-toggle-row {
+    flex-direction: column;
+  }
+
+  .novnc-controls {
+    justify-content: space-between;
+  }
+
+  .novnc-port-field {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
 }
 
 .port-mapping-fieldset {

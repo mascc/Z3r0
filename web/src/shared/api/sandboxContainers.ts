@@ -88,7 +88,7 @@ export function buildContainerNoVNCUrl(container: SandboxContainer) {
   url.search = "";
   url.hash = "";
   url.searchParams.set("autoconnect", "true");
-  url.searchParams.set("resize", "off");
+  url.searchParams.set("resize", "remote");
   url.searchParams.set("path", "websockify");
   return url.toString();
 }
