@@ -2,22 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from typing import Any
 
-from agents import Agent, RunContextWrapper, Runner, Tool, function_tool
+from agents import Agent, Tool
 from agents.extensions.models.litellm_model import LitellmModel
-from agents.stream_events import AgentUpdatedStreamEvent
 
 from config import AgentConfig, WORKSPACE, get_config
+from core import subordinates
 from core.context import AgentRuntimeContext
-from core.events import event_from_sdk_stream
-from core.session import Z3r0Session
 from core.tools import execute_command, load_skill
-from database import get_engine
 from logger import get_logger
-from schema.agent_event_schema import AgentEventSchema, ErrorEvent
 
 
 logger = get_logger(__name__)
@@ -32,8 +26,6 @@ class ToolMount:
 @dataclass(frozen=True, slots=True)
 class SubagentMount:
     code: str
-    tool_name: str
-    tool_description: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +58,6 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         subagents=(
             SubagentMount(
                 code="cse",
-                tool_name="consult_cse",
-                tool_description=(
-                    "Delegate a concrete offensive-security task (recon, exploitation, "
-                    "post-exploit) to Fr4nk. Provide a self-contained brief; Fr4nk does "
-                    "not see your prior conversation. Returns Fr4nk's final report as a string."
-                ),
             ),
         ),
     ),
@@ -135,7 +121,15 @@ class AgentRegistry:
                 raise ValueError(f"agent {spec.code} cannot mount itself as a subagent")
             child_graph = graph.child(mount.code)
             child_graph.get(mount.code)  # eager build catches circular mounts at boot
-            tools.append(_build_subagent_tool(spec.code, mount, graph=child_graph))
+        if spec.subagents:
+            tools.extend(
+                subordinates.build_subagent_tools(
+                    spec.code,
+                    (mount.code for mount in spec.subagents),
+                    get_child_agent=lambda code: graph.child(code).get(code),
+                    get_code_to_name=graph.code_to_name,
+                )
+            )
 
         return Agent(
             name=cfg.name,
@@ -192,58 +186,6 @@ class SessionAgentGraph:
         self._building.clear()
 
 
-def _build_subagent_tool(parent_code: str, mount: SubagentMount, *, graph: SessionAgentGraph) -> Tool:
-    """Synchronous subagent delegation tool: streams nested events to the parent's emitter,
-    persists via Z3r0Session(nested_for=parent) so the subagent can recall it later."""
-
-    async def _delegate(ctx: RunContextWrapper[AgentRuntimeContext], brief: str) -> str:
-        child_agent = graph.get(mount.code)
-        nested_call_id = getattr(ctx, "tool_call_id", "") or ""
-        nested_session = Z3r0Session(
-            session_id=ctx.context.session_id,
-            engine=get_engine(),
-            viewing_agent_code=mount.code,
-            agent_code_to_name=graph.code_to_name(),
-            nested_for_agent_code=parent_code,
-            nested_call_id=nested_call_id,
-        )
-        emitter = ctx.context.event_emitter
-
-        def _emit(event: AgentEventSchema) -> None:
-            if emitter is None:
-                return
-            emitter(_tag_nested(event, parent_code, nested_call_id))
-
-        try:
-            stream = Runner.run_streamed(
-                starting_agent=child_agent,
-                input=brief,
-                session=nested_session,
-                context=ctx.context,
-            )
-            async for sdk_event in stream.stream_events():
-                if isinstance(sdk_event, AgentUpdatedStreamEvent):
-                    continue
-                event = event_from_sdk_stream(sdk_event, child_agent.name)
-                if event is not None:
-                    _emit(event)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.exception("nested subagent %s failed", mount.code)
-            _emit(ErrorEvent(agent_name=child_agent.name, message=f"Subagent failed: {exc}"))
-            return f"Subagent {mount.code} failed: {exc}"
-        return _final_text(stream)
-
-    _delegate.__name__ = mount.tool_name
-    _delegate.__doc__ = mount.tool_description
-    return function_tool(
-        _delegate,
-        name_override=mount.tool_name,
-        description_override=mount.tool_description,
-    )
-
-
 def _has_tool(spec: AgentSpec, tool: Tool) -> bool:
     return any(mount.tool is tool for mount in spec.tools)
 
@@ -275,16 +217,3 @@ def _build_sandbox_skill_instructions(skill_metadata: tuple[str, ...]) -> str:
         "`load_skill` tool to read the full `SKILL.md` before applying a skill.\n\n"
         + "\n\n".join(skill_metadata)
     )
-
-
-def _tag_nested(event: AgentEventSchema, parent_code: str, nested_call_id: str) -> AgentEventSchema:
-    if not hasattr(event, "nested_for"):
-        return event
-    return event.model_copy(update={"nested_for": parent_code, "nested_call_id": nested_call_id})
-
-
-def _final_text(result: Any) -> str:
-    output = getattr(result, "final_output", None)
-    if output is None:
-        return ""
-    return output if isinstance(output, str) else str(output)

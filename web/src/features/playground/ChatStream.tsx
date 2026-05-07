@@ -1,5 +1,5 @@
 import { Tag } from "@douyinfe/semi-ui";
-import { AlertOctagon, AtSign, Bot, Brain, ChevronDown, ChevronRight, Sparkles, Wrench } from "lucide-react";
+import { AlertOctagon, AtSign, Bot, Brain, ChevronDown, ChevronRight, GitBranch, Sparkles, Wrench } from "lucide-react";
 import { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -209,6 +209,8 @@ function AgentItemView({ item, live }: { item: AgentItem; live: boolean }) {
       return <MarkdownText text={item.text} streaming={live && !item.complete} />;
     case "tool":
       return <ToolCard item={item} />;
+    case "subagent":
+      return <SubagentTaskCard item={item} />;
     case "error":
       return (
         <div className="agent-error">
@@ -221,6 +223,7 @@ function AgentItemView({ item, live }: { item: AgentItem; live: boolean }) {
 
 function isItemComplete(item: AgentItem) {
   if (item.kind === "tool") return item.resolved;
+  if (item.kind === "subagent") return item.status !== "running";
   if (item.kind === "error") return true;
   return item.complete;
 }
@@ -280,7 +283,7 @@ function ToolCard({ item }: { item: Extract<AgentItem, { kind: "tool" }> }) {
   // auto-open while a nested subagent run is in flight so the user sees its
   // progress live; otherwise let the user toggle as they wish
   const hasNested = !!item.nested && item.nested.items.length > 0;
-  const nestedActive = hasNested && !item.resolved;
+  const nestedActive = hasNested && (!item.resolved || hasRunningSubagent(item.nested!));
   const [openManual, setOpenManual] = useState(false);
   const open = openManual || nestedActive;
 
@@ -331,6 +334,28 @@ function NestedTranscriptView({ nested, live }: { nested: NestedTranscript; live
           />
         ))}
       </div>
+    </div>
+  );
+}
+
+function hasRunningSubagent(nested: NestedTranscript) {
+  return nested.items.some((item) => item.kind === "subagent" && item.status === "running");
+}
+
+function SubagentTaskCard({ item }: { item: Extract<AgentItem, { kind: "subagent" }> }) {
+  const isFailed = item.status === "failed" || item.status === "canceled";
+  const statusLabel = item.status === "running" ? "Running" : item.status === "completed" ? "Completed" : item.status === "canceled" ? "Canceled" : "Failed";
+  const body = item.status === "running"
+    ? item.progress || "Running"
+    : item.result || item.error || "(empty)";
+  return (
+    <div className={`subagent-task subagent-task-${item.status}`}>
+      <div className="subagent-task-head">
+        <GitBranch size={13} />
+        <span>{item.agentCode || "subagent"}</span>
+        <Tag size="small" color={isFailed ? "red" : item.status === "completed" ? "green" : "amber"}>{statusLabel}</Tag>
+      </div>
+      <pre className={`subagent-task-body${isFailed ? " subagent-task-body-error" : ""}`}>{body}</pre>
     </div>
   );
 }

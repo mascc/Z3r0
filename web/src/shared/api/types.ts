@@ -112,6 +112,8 @@ export type ThinkingDeltaEvent = components["schemas"]["ThinkingDeltaEvent"];
 export type ThinkingCompleteEvent = components["schemas"]["ThinkingCompleteEvent"];
 export type ToolCallEvent = components["schemas"]["ToolCallEvent"];
 export type ToolResultEvent = components["schemas"]["ToolResultEvent"];
+export type SubagentTaskEvent = components["schemas"]["SubagentTaskEvent"];
+export type AgentSubordinateStatus = components["schemas"]["AgentSubordinateStatus"];
 export type ErrorEvent = components["schemas"]["ErrorEvent"];
 export type DoneEvent = components["schemas"]["DoneEvent"];
 

@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import ROOT_PATH
+from core.subordinates import start_subagent_runtime, stop_subagent_runtime
 from core.runtime import get_agent_pool
 from database import close_engine, create_all_tables, init_engine
 from logger import get_logger
@@ -80,6 +81,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         await _create_default_admin()
 
         set_tracing_disabled(True)
+        await start_subagent_runtime()
         await get_agent_pool().start()
         await start_sandbox_container_status_monitor()
 
@@ -91,6 +93,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     finally:
         await stop_sandbox_container_status_monitor()
         await invalidate_all_agent_tool_bindings()
+        await stop_subagent_runtime()
         await get_agent_pool().stop()
         await close_engine()
 

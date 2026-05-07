@@ -27,8 +27,10 @@ from schema.agent_event_schema import (
     ThinkingDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
+    SubagentTaskEvent,
     UserMessageEvent,
 )
+from schema.agent_subordinate_schema import AgentSubordinateStatus
 
 
 # `incomplete` is a partial output, not an error
@@ -86,6 +88,32 @@ def events_from_sdk_message(
                 **scope,
             )]
     return []
+
+
+def event_from_subagent_task(
+    *,
+    run_id: str,
+    parent_agent_code: str,
+    agent_code: str,
+    agent_name: str,
+    status: AgentSubordinateStatus,
+    result: str = "",
+    error: str = "",
+    progress: str = "",
+    nested_call_id: str = "",
+) -> SubagentTaskEvent:
+    return SubagentTaskEvent(
+        agent_name=agent_name,
+        nested_for=parent_agent_code,
+        nested_call_id=nested_call_id,
+        run_id=run_id,
+        parent_agent_code=parent_agent_code,
+        agent_code=agent_code,
+        status=status,
+        result=result,
+        error=error,
+        progress=progress,
+    )
 
 
 def _scope(agent_name: str, nested_for: str, nested_call_id: str) -> dict[str, str]:
@@ -160,6 +188,8 @@ def _events_from_stored_message(
     if not text:
         return []
     role = message.get("role")
+    if role == "user" and scope.get("nested_for"):
+        return []
     if role == "user":
         return [UserMessageEvent(text=text, target_agent_code=owner_code)]
     if role == "assistant":

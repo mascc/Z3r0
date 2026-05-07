@@ -8,6 +8,7 @@ from fastapi import WebSocket, WebSocketDisconnect, status as ws_status
 from pydantic import ValidationError
 
 from config import get_config
+from core.subordinates import subscribe_session_events, unsubscribe_session_events
 from core.context import AgentRuntimeContext, AgentUserContext
 from core.runtime import get_agent_pool
 from core.tools import SANDBOX_SKILLS_DIR
@@ -77,9 +78,15 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
     if user is None:
         await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
         return
+    if not await agent_session_service.can_access_session(session_id, user.id, user.role):
+        await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
+        return
 
     await websocket.accept()
     runner: asyncio.Task | None = None
+    send_lock = asyncio.Lock()
+    subscriber = await subscribe_session_events(session_id)
+    forwarder = asyncio.create_task(_forward_subagent_events(websocket, session_id, subscriber, send_lock))
 
     try:
         while True:
@@ -91,7 +98,7 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
                 continue
 
             if command.action == AgentStreamActionSchema.INTERRUPT:
-                await _interrupt_turn(websocket, session_id, runner, user)
+                await _interrupt_turn(websocket, session_id, runner, user, send_lock)
                 runner = None
                 continue
 
@@ -106,6 +113,7 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
                 user=user,
                 sandbox_container_id=command.sandbox_container_id,
                 requested_agent_code=command.agent_code,
+                send_lock=send_lock,
             ))
     except WebSocketDisconnect:
         await _cancel_task(runner)
@@ -113,6 +121,9 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
         logger.exception("agent stream failed for session=%s", session_id)
         await _cancel_task(runner)
         await _close_silently(websocket)
+    finally:
+        await unsubscribe_session_events(session_id, subscriber)
+        await _cancel_task(forwarder)
 
 
 async def _run_turn(
@@ -122,6 +133,7 @@ async def _run_turn(
     user: AuthUser,
     sandbox_container_id: int | None,
     requested_agent_code: str | None,
+    send_lock: asyncio.Lock,
 ) -> None:
     # always emits a DoneEvent so the client exits streaming
     saw_done = False
@@ -138,18 +150,18 @@ async def _run_turn(
         async for event in runtime.stream_turn(text, agent_code, context):
             if isinstance(event, DoneEvent):
                 saw_done = True
-            if not await _send_event(websocket, event):
+            if not await _send_event(websocket, event, send_lock):
                 return
     except asyncio.CancelledError:
         raise
     except PermissionError:
-        await _send_event(websocket, ErrorEvent(message="agent session not found", code="not_found"))
+        await _send_event(websocket, ErrorEvent(message="agent session not found", code="not_found"), send_lock)
     except Exception as exc:
         logger.exception("agent turn failed for session=%s", session_id)
-        await _send_event(websocket, ErrorEvent(message=str(exc) or "agent turn failed"))
+        await _send_event(websocket, ErrorEvent(message=str(exc) or "agent turn failed"), send_lock)
     finally:
         if not saw_done:
-            await _send_event(websocket, DoneEvent())
+            await _send_event(websocket, DoneEvent(), send_lock)
 
 
 async def _interrupt_turn(
@@ -157,31 +169,57 @@ async def _interrupt_turn(
     session_id: str,
     runner: asyncio.Task | None,
     user: AuthUser,
+    send_lock: asyncio.Lock,
 ) -> None:
     if not await agent_session_service.can_access_session(session_id, user.id, user.role):
-        await _send_event(websocket, ErrorEvent(message="agent session not found", code="not_found"))
-        await _send_event(websocket, DoneEvent())
+        await _send_event(websocket, ErrorEvent(message="agent session not found", code="not_found"), send_lock)
+        await _send_event(websocket, DoneEvent(), send_lock)
         return
 
     had_local_runner = runner is not None and not runner.done()
     interrupted = await get_agent_pool().try_interrupt(session_id)
     await _cancel_task(runner)
     if interrupted and not had_local_runner:
-        await _send_event(websocket, DoneEvent())
+        await _send_event(websocket, DoneEvent(), send_lock)
 
 
-async def _send_event(websocket: WebSocket, event: AgentEventSchema) -> bool:
+async def _send_event(
+    websocket: WebSocket,
+    event: AgentEventSchema,
+    send_lock: asyncio.Lock | None = None,
+) -> bool:
     if (
         websocket.client_state != WebSocketState.CONNECTED
         or websocket.application_state != WebSocketState.CONNECTED
     ):
         return False
     try:
-        await websocket.send_text(event.model_dump_json())
+        if send_lock is None:
+            await websocket.send_text(event.model_dump_json())
+        else:
+            async with send_lock:
+                await websocket.send_text(event.model_dump_json())
         return True
     except Exception:
         logger.debug("failed to send agent event to websocket", exc_info=True)
         return False
+
+
+async def _forward_subagent_events(
+    websocket: WebSocket,
+    session_id: str,
+    queue: asyncio.Queue[AgentEventSchema],
+    send_lock: asyncio.Lock,
+) -> None:
+    try:
+        while True:
+            event = await queue.get()
+            if not await _send_event(websocket, event, send_lock):
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("subagent event forwarding stopped session=%s", session_id, exc_info=True)
 
 
 async def _cancel_task(task: asyncio.Task | None) -> None:

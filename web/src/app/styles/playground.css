@@ -872,6 +872,45 @@
   background: rgba(217, 45, 58, 0.04);
 }
 
+.subagent-task {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #e7edf4;
+  border-radius: 8px;
+}
+
+.subagent-task-running { border-color: #f3d9a4; }
+.subagent-task-completed { border-color: #c7e6e4; }
+.subagent-task-failed,
+.subagent-task-canceled { border-color: #f3c3c9; }
+
+.subagent-task-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #2f4057;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.subagent-task-body {
+  margin: 0;
+  overflow-x: auto;
+  color: #5f6f86;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.subagent-task-body-error {
+  color: #b4283a;
+}
+
 @media (max-width: 900px) {
   .playground-shell {
     height: auto;

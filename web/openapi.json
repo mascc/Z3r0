@@ -147,6 +147,16 @@
         "title": "AgentStreamSendCommand",
         "type": "object"
       },
+      "AgentSubordinateStatus": {
+        "enum": [
+          "running",
+          "completed",
+          "failed",
+          "canceled"
+        ],
+        "title": "AgentSubordinateStatus",
+        "type": "string"
+      },
       "CommonResponse": {
         "properties": {
           "code": {
@@ -909,6 +919,7 @@
               "discriminator": {
                 "mapping": {
                   "error": "#/components/schemas/ErrorEvent",
+                  "subagent_task": "#/components/schemas/SubagentTaskEvent",
                   "text_complete": "#/components/schemas/TextCompleteEvent",
                   "text_delta": "#/components/schemas/TextDeltaEvent",
                   "thinking_complete": "#/components/schemas/ThinkingCompleteEvent",
@@ -940,6 +951,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ToolResultEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SubagentTaskEvent"
                 },
                 {
                   "$ref": "#/components/schemas/ErrorEvent"
@@ -1302,6 +1316,69 @@
         ],
         "title": "SessionType",
         "type": "string"
+      },
+      "SubagentTaskEvent": {
+        "properties": {
+          "agent_code": {
+            "title": "Agent Code",
+            "type": "string"
+          },
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "nested_call_id": {
+            "default": "",
+            "title": "Nested Call Id",
+            "type": "string"
+          },
+          "nested_for": {
+            "default": "",
+            "title": "Nested For",
+            "type": "string"
+          },
+          "parent_agent_code": {
+            "default": "",
+            "title": "Parent Agent Code",
+            "type": "string"
+          },
+          "progress": {
+            "default": "",
+            "title": "Progress",
+            "type": "string"
+          },
+          "result": {
+            "default": "",
+            "title": "Result",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentSubordinateStatus"
+          },
+          "type": {
+            "const": "subagent_task",
+            "default": "subagent_task",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "agent_code",
+          "status"
+        ],
+        "title": "SubagentTaskEvent",
+        "type": "object"
       },
       "SystemUserLoginRequest": {
         "properties": {

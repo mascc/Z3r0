@@ -1,4 +1,4 @@
-import type { AgentContentEvent } from "../../shared/api/types";
+import type { AgentContentEvent, AgentSubordinateStatus } from "../../shared/api/types";
 
 export type AgentItem =
   | { kind: "thinking"; id: string; text: string; complete: boolean }
@@ -14,6 +14,16 @@ export type AgentItem =
       resolved: boolean;
       nested?: NestedTranscript;
     }
+  | {
+      kind: "subagent";
+      id: string;
+      runId: string;
+      agentCode: string;
+      status: AgentSubordinateStatus;
+      result: string;
+      error: string;
+      progress: string;
+    }
   | { kind: "error"; id: string; message: string };
 
 export type NestedTranscript = {
@@ -28,9 +38,12 @@ export type ChatNode =
 export type ChatState = {
   nodes: ChatNode[];
   streaming: boolean;
+  pendingNested: Record<string, AgentContentEvent[]>;
 };
 
-export const initialChatState: ChatState = { nodes: [], streaming: false };
+export const initialChatState: ChatState = { nodes: [], streaming: false, pendingNested: {} };
+
+const MAX_PENDING_NESTED_EVENTS = 64;
 
 function newId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -64,7 +77,7 @@ export function appendUserMessage(state: ChatState, text: string, targetAgentCod
 }
 
 export function finishChatTurn(state: ChatState): ChatState {
-  return { ...state, streaming: false };
+  return { ...state, streaming: false, pendingNested: {} };
 }
 
 export function chatReduce(state: ChatState, event: AgentContentEvent): ChatState {
@@ -100,10 +113,33 @@ function routeToTopLevel(state: ChatState, event: AgentContentEvent): ChatState 
     nodes.push(agent);
   }
   const finished = applyEventToScope(agent, event);
-  return finished ? finishChatTurn({ ...state, nodes }) : { ...state, nodes };
+  const nextState = finished ? finishChatTurn({ ...state, nodes }) : { ...state, nodes };
+  if (event.type === "tool_call" || event.type === "tool_result") {
+    return drainPendingNested(nextState, event.call_id);
+  }
+  if (event.type === "error") return clearPendingNested(nextState);
+  return nextState;
 }
 
 function routeToNested(state: ChatState, event: AgentContentEvent, nestedCallId: string): ChatState {
+  const routed = routeToNestedNow(state, event, nestedCallId);
+  if (routed) return routed;
+
+  const queued = state.pendingNested[nestedCallId] ?? [];
+  return {
+    ...state,
+    pendingNested: {
+      ...state.pendingNested,
+      [nestedCallId]: [...queued, event].slice(-MAX_PENDING_NESTED_EVENTS),
+    },
+  };
+}
+
+function routeToNestedNow(
+  state: ChatState,
+  event: AgentContentEvent,
+  nestedCallId: string,
+): ChatState | null {
   // nested events attach to the latest tool card whose callId matches; we
   // walk agent nodes in reverse so we always target the in-flight delegation
   const nodes = state.nodes.slice();
@@ -124,8 +160,35 @@ function routeToNested(state: ChatState, event: AgentContentEvent, nestedCallId:
     nodes[i] = { ...node, items };
     return { ...state, nodes };
   }
-  // no matching ToolCard found; drop the event defensively
-  return state;
+  return null;
+}
+
+function drainPendingNested(state: ChatState, callId: string): ChatState {
+  const pending = state.pendingNested[callId];
+  if (!pending?.length) return state;
+
+  const remaining: AgentContentEvent[] = [];
+  let nextState = state;
+  for (const event of pending) {
+    const routed = routeToNestedNow(nextState, event, callId);
+    if (routed) {
+      nextState = routed;
+    } else {
+      remaining.push(event);
+    }
+  }
+
+  const pendingNested = { ...nextState.pendingNested };
+  if (remaining.length) {
+    pendingNested[callId] = remaining;
+  } else {
+    delete pendingNested[callId];
+  }
+  return { ...nextState, pendingNested };
+}
+
+function clearPendingNested(state: ChatState): ChatState {
+  return Object.keys(state.pendingNested).length ? { ...state, pendingNested: {} } : state;
 }
 
 function findToolItemIndex(items: AgentItem[], callId: string): number {
@@ -197,6 +260,27 @@ function applyEventToScope(scope: ItemScope, event: AgentContentEvent): boolean 
         isError: event.is_error,
         resolved: true,
       };
+      return false;
+    }
+
+    case "subagent_task": {
+      setAgentName(scope, event.agent_name);
+      const index = scope.items.findIndex((item) => item.kind === "subagent" && item.runId === event.run_id);
+      const item = {
+        kind: "subagent" as const,
+        id: event.run_id,
+        runId: event.run_id,
+        agentCode: event.agent_code,
+        status: event.status,
+        result: event.result,
+        error: event.error,
+        progress: event.progress,
+      };
+      if (index === -1) {
+        scope.items.push(item);
+      } else {
+        scope.items[index] = item;
+      }
       return false;
     }
 

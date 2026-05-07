@@ -5,6 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from config import get_config
 from logger import get_logger
+from model.agent_subordinate_model import AgentSubordinateTask
 from model.agent_message_meta_model import AgentMessageMeta
 from model.agent_session_meta_model import AgentSessionMeta
 from model.sandbox_container_model import SandboxContainer
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 # registered so SQLModel.metadata picks every table up at create_all time
 _registered_models = [
     SystemUser, SandboxImage, SandboxContainer, WorkProject,
-    AgentSessionMeta, AgentMessageMeta,
+    AgentSessionMeta, AgentMessageMeta, AgentSubordinateTask,
 ]
 
 _engine: AsyncEngine | None = None

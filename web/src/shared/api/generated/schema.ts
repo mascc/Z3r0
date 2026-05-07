@@ -450,6 +450,11 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * AgentSubordinateStatus
+         * @enum {string}
+         */
+        AgentSubordinateStatus: "running" | "completed" | "failed" | "canceled";
         /** CommonResponse */
         CommonResponse: {
             /**
@@ -867,7 +872,7 @@ export interface components {
         /** ListAgentEventsResponse */
         ListAgentEventsResponse: {
             /** Items */
-            items: (components["schemas"]["UserMessageEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["ErrorEvent"])[];
+            items: (components["schemas"]["UserMessageEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["SubagentTaskEvent"] | components["schemas"]["ErrorEvent"])[];
             /** Session Id */
             session_id: string;
         };
@@ -1010,6 +1015,54 @@ export interface components {
          * @enum {string}
          */
         SessionType: "chat" | "project";
+        /** SubagentTaskEvent */
+        SubagentTaskEvent: {
+            /** Agent Code */
+            agent_code: string;
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /**
+             * Error
+             * @default
+             */
+            error: string;
+            /**
+             * Nested Call Id
+             * @default
+             */
+            nested_call_id: string;
+            /**
+             * Nested For
+             * @default
+             */
+            nested_for: string;
+            /**
+             * Parent Agent Code
+             * @default
+             */
+            parent_agent_code: string;
+            /**
+             * Progress
+             * @default
+             */
+            progress: string;
+            /**
+             * Result
+             * @default
+             */
+            result: string;
+            /** Run Id */
+            run_id: string;
+            status: components["schemas"]["AgentSubordinateStatus"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "subagent_task";
+        };
         /** SystemUserLoginRequest */
         SystemUserLoginRequest: {
             /** Email */

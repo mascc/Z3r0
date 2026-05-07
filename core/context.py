@@ -1,7 +1,4 @@
-from collections.abc import Callable
-from dataclasses import dataclass, field
-
-from schema.agent_event_schema import AgentEventSchema
+from dataclasses import dataclass
 from schema.system_user_schema import SystemUserRole
 
 
@@ -20,7 +17,3 @@ class AgentRuntimeContext:
     sandbox_container_id: int | None = None
     sandbox_container_generation: int = 0
     sandbox_skill_metadata: tuple[str, ...] = ()
-    # in-process only: nested function tools push events back to the active turn here
-    event_emitter: Callable[[AgentEventSchema], None] | None = field(
-        default=None, repr=False, compare=False,
-    )

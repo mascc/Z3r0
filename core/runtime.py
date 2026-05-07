@@ -109,9 +109,8 @@ class AgentSession:
             viewing_agent_code=agent_code,
             agent_code_to_name=graph.code_to_name(),
         )
-        # main and nested SDK streams converge into one queue
+        # SDK stream events converge into one queue for this turn
         queue: asyncio.Queue[AgentEventSchema | None] = asyncio.Queue()
-        context.event_emitter = queue.put_nowait
 
         result_holder: dict[str, Any] = {"result": None}
         buffers: dict[str, _DeltaBuffer] = {}
@@ -154,7 +153,6 @@ class AgentSession:
                 main_task.cancel()
             raise
         finally:
-            context.event_emitter = None
             if not main_task.done():
                 main_task.cancel()
                 try:

@@ -4,13 +4,15 @@ from sqlalchemy import delete, func, text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from core.subordinates import cancel_session_subagent_runs
 from core.agents import DEFAULT_AGENT_CODE
-from core.events import events_from_sdk_message
+from core.events import event_from_subagent_task, events_from_sdk_message
 from core.runtime import get_agent_pool, get_agent_registry
 from core.session import fetch_stored_items
 from database import get_async_session
 from logger import get_logger
 from model.agent_session_meta_model import AgentSessionMeta
+from model.agent_subordinate_model import AgentSubordinateTask
 from model.work_project_model import WorkProject
 from schema.agent_event_schema import AgentContentEventSchema
 from schema.agent_session_schema import AgentSessionSummarySchema, SessionType
@@ -160,6 +162,11 @@ async def replay_session_events(
         if not await _can_access_session(session, session_id, user_id, user_role):
             return None
         stored_items = await fetch_stored_items(session, session_id)
+        sub_tasks = list((await session.exec(
+            select(AgentSubordinateTask)
+            .where(AgentSubordinateTask.session_id == session_id)
+            .order_by(AgentSubordinateTask.created_at)
+        )).all())
 
     code_to_name = get_agent_registry().code_to_name()
     events: list[AgentContentEventSchema] = []
@@ -172,7 +179,32 @@ async def replay_session_events(
             nested_for=stored.nested_for,
             nested_call_id=stored.nested_call_id,
         ))
+    for task in reversed(sub_tasks):
+        index = _find_matching_tool_event_index(events, task.nested_call_id)
+        if index == -1:
+            continue
+        events.insert(index + 1, event_from_subagent_task(
+            run_id=task.run_id,
+            parent_agent_code=task.parent_agent_code,
+            agent_code=task.agent_code,
+            agent_name=task.agent_name,
+            status=task.status,
+            result=task.result,
+            error=task.error,
+            progress=task.progress,
+            nested_call_id=task.nested_call_id,
+        ))
     return events
+
+
+def _find_matching_tool_event_index(events: list[AgentContentEventSchema], nested_call_id: str) -> int:
+    if not nested_call_id:
+        return -1
+    for index in range(len(events) - 1, -1, -1):
+        event = events[index]
+        if getattr(event, "type", "") == "tool_call" and getattr(event, "call_id", "") == nested_call_id:
+            return index
+    return -1
 
 
 async def can_access_session(session_id: str, user_id: int, user_role: SystemUserRole) -> bool:
@@ -192,6 +224,7 @@ async def delete_session(
         if not await _can_access_session(session, session_id, user_id, user_role):
             return False
 
+    await cancel_session_subagent_runs(session_id)
     await get_agent_pool().discard(session_id)
 
     async with get_async_session() as session:

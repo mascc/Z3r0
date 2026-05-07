@@ -14,5 +14,6 @@
 
 ## Subagent delegation
 
-- You may delegate a concrete offensive-security task to Fr4nk by calling the `consult_cse(input)` tool. Fr4nk runs in isolation: he does not see this conversation, so the brief you pass MUST be self-contained — include the goal, the relevant target/scope, any prior findings he needs, and the expected report format. The tool returns Fr4nk's final report as a string, which you then incorporate into your own answer.
-- Use `consult_cse` only when the task genuinely requires hands-on engineering (recon, exploitation, post-exploit).
+- You may delegate a concrete offensive-security task to Fr4nk by calling `start_subagent_task(agent_code="cse", brief="...")`. Fr4nk runs in isolation: he does not see this conversation, so the brief you pass MUST be self-contained — include the goal, the relevant target/scope, any prior findings he needs, and the expected report format.
+- The start tool returns a persistent run id. Use `read_subagent_task(run_id)` to inspect status/result/error/progress, `wait_subagent_task(run_id, timeout_seconds)` when you need to wait before coordinating the next step, and `cancel_subagent_task(run_id)` only when the delegated task should stop.
+- Use subagent delegation only when the task genuinely requires hands-on engineering (recon, exploitation, post-exploit).

@@ -3,6 +3,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from schema.agent_subordinate_schema import AgentSubordinateStatus
+
 
 class AgentEventTypeSchema(StrEnum):
     USER_MESSAGE = "user_message"
@@ -12,6 +14,7 @@ class AgentEventTypeSchema(StrEnum):
     TEXT_COMPLETE = "text_complete"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    SUBAGENT_TASK = "subagent_task"
     DONE = "done"
     ERROR = "error"
 
@@ -76,6 +79,17 @@ class ToolResultEvent(_AgentScopedEvent):
     is_error: bool = False
 
 
+class SubagentTaskEvent(_AgentScopedEvent):
+    type: Literal[AgentEventTypeSchema.SUBAGENT_TASK] = AgentEventTypeSchema.SUBAGENT_TASK
+    run_id: str
+    parent_agent_code: str = ""
+    agent_code: str
+    status: AgentSubordinateStatus
+    result: str = ""
+    error: str = ""
+    progress: str = ""
+
+
 class DoneEvent(_AgentScopedEvent):
     type: Literal[AgentEventTypeSchema.DONE] = AgentEventTypeSchema.DONE
 
@@ -95,6 +109,7 @@ AgentContentEventSchema = Annotated[
     | ThinkingCompleteEvent
     | ToolCallEvent
     | ToolResultEvent
+    | SubagentTaskEvent
     | ErrorEvent,
     Field(discriminator="type"),
 ]
@@ -107,6 +122,7 @@ AgentEventSchema = Annotated[
     | ThinkingCompleteEvent
     | ToolCallEvent
     | ToolResultEvent
+    | SubagentTaskEvent
     | DoneEvent
     | ErrorEvent,
     Field(discriminator="type"),
