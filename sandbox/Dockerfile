@@ -34,9 +34,9 @@ RUN set -eux; \
     npm install -g --no-audit --no-fund dev-browser@latest; \
     dev-browser install; \
     npm cache clean --force; \
-    mkdir -p /out/root/.cache /out/usr/local/bin /out/usr/local/lib/node_modules; \
+    mkdir -p /out/root /out/usr/local/bin /out/usr/local/lib/node_modules; \
     cp -a /root/.dev-browser /out/root/.dev-browser; \
-    cp -a /root/.cache/ms-playwright /out/root/.cache/ms-playwright; \
+    cp -a /root/.cache /out/root/.cache; \
     cp -a /usr/local/bin/dev-browser /out/usr/local/bin/dev-browser; \
     cp -a /usr/local/lib/node_modules/dev-browser /out/usr/local/lib/node_modules/dev-browser; \
     rm -rf /root/.npm /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
@@ -63,8 +63,28 @@ RUN set -eux; \
     apt-get install -y \
       --no-install-recommends \
       ca-certificates \
-      chromium \
       curl \
+      libasound2t64 \
+      libatk-bridge2.0-0t64 \
+      libatk1.0-0t64 \
+      libcairo2 \
+      libcups2t64 \
+      libdbus-1-3 \
+      libdrm2 \
+      libgbm1 \
+      libglib2.0-0t64 \
+      libgtk-3-0t64 \
+      libnspr4 \
+      libnss3 \
+      libpango-1.0-0 \
+      libx11-6 \
+      libxcb1 \
+      libxcomposite1 \
+      libxdamage1 \
+      libxext6 \
+      libxfixes3 \
+      libxkbcommon0 \
+      libxrandr2 \
       nodejs \
       npm \
       python3 \
@@ -83,9 +103,18 @@ EXPOSE 8000
 
 COPY --from=novnc-assets /out/novnc /usr/share/novnc
 COPY --from=dev-browser-assets /out/root/.dev-browser /root/.dev-browser
-COPY --from=dev-browser-assets /out/root/.cache/ms-playwright /root/.cache/ms-playwright
+COPY --from=dev-browser-assets /out/root/.cache /root/.cache
 COPY --from=dev-browser-assets /out/usr/local/bin/dev-browser /usr/local/bin/dev-browser
 COPY --from=dev-browser-assets /out/usr/local/lib/node_modules/dev-browser /usr/local/lib/node_modules/dev-browser
+RUN set -eux; \
+    chromium_binary="$(find /root/.cache /root/.dev-browser -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' -o -name chromium -o -name chrome \) -perm /111 | sort | head -n 1)"; \
+    if [ -z "$chromium_binary" ]; then \
+      echo 'No Chromium binary found from dev-browser install. Executable candidates:'; \
+      find /root/.cache /root/.dev-browser -maxdepth 6 -type f -perm /111 -print | sort; \
+      exit 1; \
+    fi; \
+    "$chromium_binary" --version; \
+    ln -sf "$chromium_binary" /usr/local/bin/dev-browser-chromium
 COPY --from=go-builder --chmod=755 /out/sandbox-proxy /usr/local/bin/sandbox-proxy
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 COPY supervisord.conf /supervisord.conf
