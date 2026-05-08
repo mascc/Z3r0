@@ -214,28 +214,28 @@ export function SubagentSidePanel({
             <GitBranch size={15} />
             <span>{tabs.length > 1 ? "Subagents" : title}</span>
           </div>
+          {tabs.length > 0 ? (
+            <div className="subagent-side-tabs" role="tablist" aria-label="Subagent messages">
+              {tabs.map((tab) => {
+                const active = selection?.agentCode === tab.agentCode;
+                return (
+                  <button
+                    key={tab.agentCode}
+                    type="button"
+                    className={`subagent-tab${active ? " subagent-tab-active" : ""}`}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => onSelect(tab.selection)}
+                  >
+                    <span className="subagent-tab-name" title={tab.agentCode || "subagent"}>{tab.agentCode || "subagent"}</span>
+                    <SubagentStatusTag status={tab.status} />
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           <Button icon={<X size={14} />} theme="borderless" type="tertiary" onClick={onClose} aria-label="Close subagent panel" />
         </div>
-        {tabs.length > 0 ? (
-          <div className="subagent-side-tabs" role="tablist" aria-label="Subagent messages">
-            {tabs.map((tab) => {
-              const active = selection?.agentCode === tab.agentCode;
-              return (
-                <button
-                  key={tab.agentCode}
-                  type="button"
-                  className={`subagent-tab${active ? " subagent-tab-active" : ""}`}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => onSelect(tab.selection)}
-                >
-                  <span className="subagent-tab-name" title={tab.agentCode || "subagent"}>{tab.agentCode || "subagent"}</span>
-                  <SubagentStatusTag status={tab.status} />
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
         <div className="subagent-side-body">
           {target ? <SubagentTargetView target={target} /> : <div className="transcript-empty">Subagent output is no longer available.</div>}
         </div>

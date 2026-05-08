@@ -458,12 +458,18 @@ def _terminate_container_command_sync(container_hash: str, marker_path: str) -> 
 
 
 def _close_command_stream(stream: object) -> None:
+    response = getattr(stream, "_response", None)
     close = getattr(stream, "close", None)
     if callable(close):
         try:
             close()
         except Exception:
             logger.debug("failed to close sandbox command stream", exc_info=True)
+    _close_shell_response_sync(stream, response)
+    try:
+        setattr(stream, "_response", None)
+    except Exception:
+        pass
 
 
 def _split_command_output_chunk(chunk: object) -> tuple[bytes | str | None, bytes | str | None]:

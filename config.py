@@ -48,6 +48,7 @@ class AgentPoolConfig(StrictConfigModel):
 
 # per-process agent run tuning
 class AgentRuntimeConfig(StrictConfigModel):
+    main_max_turns: int = Field(default=1000, ge=1)
     subordinate_max_turns: int = Field(default=1000, ge=1)
 
 

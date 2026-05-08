@@ -33,9 +33,12 @@ from service.sandbox_container_service import (
     stop_sandbox_container_status_monitor,
 )
 from service.system_user_service import create_system_user, query_system_user_by_username
+from utils.urllib3_compat import install_urllib3_closed_file_close_patch
 
 
 logger = get_logger(__name__)
+
+install_urllib3_closed_file_close_patch()
 
 WEB_DIST_PATH = ROOT_PATH / "web" / "dist"
 API_PREFIX = "/api"

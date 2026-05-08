@@ -11,6 +11,10 @@
         "username": "root",
         "password": "123456"
     },
+    "agent_runtime": {
+        "main_max_turns": 1000,
+        "subordinate_max_turns": 1000
+    },
     "agents": {
         "cso": {
             "code": "cso",

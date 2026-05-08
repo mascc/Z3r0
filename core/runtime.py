@@ -127,11 +127,13 @@ class AgentSession:
 
         async def _consume_main() -> None:
             try:
+                max_turns = get_config().agent_runtime.main_max_turns
                 stream = Runner.run_streamed(
                     starting_agent=agent,
                     session=memory_session,
                     input=_build_user_input(text),
                     context=context,
+                    max_turns=max_turns,
                 )
                 result_holder["result"] = stream
                 async for sdk_event in stream.stream_events():
