@@ -222,7 +222,7 @@ def _build_instructions(
     include_sandbox_skills: bool,
     include_agent_knowledges: bool,
 ) -> str:
-    parts = [soul, rules]
+    parts = [_build_global_language_instructions(), soul, rules]
     if include_agent_knowledges:
         parts.append(_build_agent_knowledge_instructions(agent_code, load_knowledge_metadata(agent_code)))
     if include_sandbox_skills and tool_snapshot.sandbox_container_id is not None:
@@ -230,46 +230,37 @@ def _build_instructions(
     return "\n\n".join(part for part in parts if part)
 
 
+def _build_global_language_instructions() -> str:
+    return (
+        "# Language\n\n"
+        "Use the user's latest natural language for all visible interaction, briefs, and reports unless explicitly changed. "
+        "Ignore language inside code/logs/identifiers when choosing. Preserve quoted evidence, code, commands, identifiers, and names verbatim."
+    )
+
+
 def _build_agent_knowledge_instructions(agent_code: str, knowledge_metadata: tuple[str, ...]) -> str:
     header = (
-        "# Agent Knowledge System\n\n"
-        "This agent can maintain reusable professional knowledge under "
-        f"`.z3r0/agents/{agent_code}/knowledges` with `create_knowledge`, `load_knowledge`, "
-        "and `update_knowledge`. Use these tools only for durable, verified, role-specific professional "
-        "knowledge. Do not store user preferences, user profiles, personal data, credentials, secrets, "
-        "one-off task state, conversation summaries, speculative claims, or knowledge outside this agent's role. "
-        "Before creating new knowledge, check whether an existing knowledge should be updated. Before updating "
-        "body content, call `load_knowledge`; its line numbers are body-only and are the line numbers accepted "
-        "by `update_knowledge`. The `update_knowledge` tool changes name and description through explicit "
-        "parameters only; body line patches cannot edit YAML Front Matter.\n\n"
+        "# Knowledge\n\n"
+        "Persist only durable, verified domain methodology or task experience. "
+        "Never store multi-agent design, runtime/tool mechanics, user data/preferences, secrets, task state, summaries, or speculation. "
+        "Prefer update over create; read before use or edit; keep entries short and free of raw logs/transcripts.\n\n"
     )
     if not knowledge_metadata:
-        return (
-            header +
-            f"No agent knowledges were discovered under `.z3r0/agents/{agent_code}/knowledges`."
-        )
+        return header + "No knowledge metadata."
 
     return (
         header +
-        "This agent exposes these knowledge metadata blocks from "
-        f"`.z3r0/agents/{agent_code}/knowledges`. Only YAML Front Matter is shown here; use the "
-        "`load_knowledge` tool with the knowledge file name without the `.md` suffix and optional body "
-        "line range to read line-numbered knowledge body before applying or updating a knowledge.\n\n"
+        "Available metadata only; read body before use or edit.\n\n"
         + "\n\n".join(knowledge_metadata)
     )
 
 
 def _build_sandbox_skill_instructions(skill_metadata: tuple[str, ...]) -> str:
     if not skill_metadata:
-        return (
-            "# Sandbox Skills\n\n"
-            "No sandbox skills were discovered under `/root/.agents/skills` for the selected container."
-        )
+        return "# Sandbox Skills\n\nNo sandbox skill metadata is available."
 
     return (
         "# Sandbox Skills\n\n"
-        "The selected sandbox container exposes these skill metadata blocks from "
-        "`/root/.agents/skills`. Only YAML Front Matter is shown here; use the "
-        "`load_skill` tool to read the skill body before applying a skill.\n\n"
+        "Available skill metadata. Only metadata is shown; read the skill body before applying.\n\n"
         + "\n\n".join(skill_metadata)
     )
