@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+from collections import defaultdict
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import select, update
 
+from core.context import MAIN_AGENT_INSTANCE_PREFIX
 from database import get_async_session
 from logger import get_logger
 from model.agent_notification_model import AgentNotification
@@ -19,6 +22,39 @@ from schema.agent_subordinate_schema import AgentSubordinateTaskSnapshot
 
 
 logger = get_logger(__name__)
+_WAKEUP_QUEUE_SIZE = 256
+_wakeup_subscribers: dict[str, set[asyncio.Queue[str]]] = defaultdict(set)
+_wakeup_subscribers_lock = asyncio.Lock()
+_notification_claim_lock = asyncio.Lock()
+
+
+async def subscribe_session_notification_wakeups(session_id: str) -> asyncio.Queue[str]:
+    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=_WAKEUP_QUEUE_SIZE)
+    async with _wakeup_subscribers_lock:
+        _wakeup_subscribers[session_id].add(queue)
+    return queue
+
+
+async def unsubscribe_session_notification_wakeups(session_id: str, queue: asyncio.Queue[str]) -> None:
+    async with _wakeup_subscribers_lock:
+        queues = _wakeup_subscribers.get(session_id)
+        if queues is None:
+            return
+        queues.discard(queue)
+        if not queues:
+            _wakeup_subscribers.pop(session_id, None)
+
+
+async def publish_notification_wakeup(session_id: str) -> None:
+    if not session_id:
+        return
+    async with _wakeup_subscribers_lock:
+        targets = list(_wakeup_subscribers.get(session_id, ()))
+    for queue in targets:
+        try:
+            queue.put_nowait(session_id)
+        except asyncio.QueueFull:
+            logger.debug("notification wakeup dropped for slow subscriber session=%s", session_id)
 
 
 async def enqueue_subagent_finished_notification(
@@ -31,8 +67,6 @@ async def enqueue_subagent_finished_notification(
     """Create one durable inbox item for the parent agent of a terminal subagent run."""
 
     payload = {
-        "run_id": snapshot.run_id,
-        "parent_agent_code": snapshot.parent_agent_code,
         "agent_code": snapshot.agent_code,
         "agent_name": snapshot.agent_name,
         "status": snapshot.status.value,
@@ -41,14 +75,17 @@ async def enqueue_subagent_finished_notification(
         "error": snapshot.error,
         "started_at": _iso(snapshot.started_at),
         "finished_at": _iso(snapshot.finished_at),
-        "sandbox_container_id": sandbox_container_id,
-        "sandbox_container_generation": sandbox_container_generation,
-        "sandbox_skill_metadata": list(sandbox_skill_metadata),
     }
     notification = AgentNotification(
         id=str(uuid4()),
         session_id=snapshot.session_id,
         target_agent_code=snapshot.parent_agent_code,
+        target_agent_instance_id=snapshot.parent_agent_instance_id,
+        nested_for_agent_code="",
+        nested_call_id="",
+        sandbox_container_id=sandbox_container_id,
+        sandbox_container_generation=sandbox_container_generation,
+        sandbox_skill_metadata=list(sandbox_skill_metadata),
         kind=AgentNotificationKind.SUBAGENT_FINISHED.value,
         status=AgentNotificationStatus.PENDING.value,
         run_id=snapshot.run_id,
@@ -76,6 +113,73 @@ async def enqueue_subagent_finished_notification(
         notification.run_id,
         notification.target_agent_code,
     )
+    await publish_notification_wakeup(notification.session_id)
+    return snapshot_from_notification(notification)
+
+
+async def enqueue_async_command_finished_notification(
+    *,
+    session_id: str,
+    target_agent_code: str,
+    target_agent_instance_id: str,
+    run_id: str,
+    command: str,
+    output_file: str,
+    exit_code: int,
+    output_bytes: int,
+    output_lines: int,
+    nested_for_agent_code: str = "",
+    nested_call_id: str = "",
+    sandbox_container_id: int | None = None,
+    sandbox_container_generation: int = 0,
+    sandbox_skill_metadata: tuple[str, ...] = (),
+) -> AgentNotificationSnapshot | None:
+    payload = {
+        "command": command,
+        "output_file": output_file,
+        "exit_code": exit_code,
+        "bytes": output_bytes,
+        "lines": output_lines,
+        "finished_at": _iso(datetime.now()),
+    }
+    notification = AgentNotification(
+        id=str(uuid4()),
+        session_id=session_id,
+        target_agent_code=target_agent_code,
+        target_agent_instance_id=target_agent_instance_id,
+        nested_for_agent_code=nested_for_agent_code,
+        nested_call_id=nested_call_id,
+        sandbox_container_id=sandbox_container_id,
+        sandbox_container_generation=sandbox_container_generation,
+        sandbox_skill_metadata=list(sandbox_skill_metadata),
+        kind=AgentNotificationKind.ASYNC_COMMAND_FINISHED.value,
+        status=AgentNotificationStatus.PENDING.value,
+        run_id=run_id,
+        payload=payload,
+    )
+    async with get_async_session() as session:
+        try:
+            session.add(notification)
+            await session.commit()
+            await session.refresh(notification)
+        except IntegrityError:
+            await session.rollback()
+            existing = (await session.exec(
+                select(AgentNotification).where(
+                    AgentNotification.kind == AgentNotificationKind.ASYNC_COMMAND_FINISHED.value,
+                    AgentNotification.run_id == run_id,
+                )
+            )).first()
+            return snapshot_from_notification(existing) if existing is not None else None
+
+    logger.info(
+        "async command notification queued: %s session=%s run=%s target_instance=%s",
+        notification.id,
+        notification.session_id,
+        notification.run_id,
+        notification.target_agent_instance_id,
+    )
+    await publish_notification_wakeup(notification.session_id)
     return snapshot_from_notification(notification)
 
 
@@ -83,6 +187,21 @@ async def claim_next_pending_notification(
     *,
     session_id: str,
     target_agent_code: str | None = None,
+    target_agent_instance_id: str | None = None,
+) -> AgentNotificationSnapshot | None:
+    async with _notification_claim_lock:
+        return await _claim_next_pending_notification_locked(
+            session_id=session_id,
+            target_agent_code=target_agent_code,
+            target_agent_instance_id=target_agent_instance_id,
+        )
+
+
+async def _claim_next_pending_notification_locked(
+    *,
+    session_id: str,
+    target_agent_code: str | None,
+    target_agent_instance_id: str | None,
 ) -> AgentNotificationSnapshot | None:
     now = datetime.now()
     async with get_async_session() as session:
@@ -92,6 +211,12 @@ async def claim_next_pending_notification(
         )
         if target_agent_code is not None:
             statement = statement.where(AgentNotification.target_agent_code == target_agent_code)
+        if target_agent_instance_id is not None:
+            statement = statement.where(AgentNotification.target_agent_instance_id == target_agent_instance_id)
+        if target_agent_instance_id is None:
+            statement = statement.where(
+                AgentNotification.target_agent_instance_id.like(f"{MAIN_AGENT_INSTANCE_PREFIX}%")
+            )
         notification = (await session.exec(
             statement
             .order_by(AgentNotification.created_at.asc())
@@ -100,19 +225,32 @@ async def claim_next_pending_notification(
         )).first()
         if notification is None:
             return None
-        notification.status = AgentNotificationStatus.PROCESSING.value
-        notification.started_at = now
-        notification.updated_at = now
-        session.add(notification)
+        notification_id = notification.id
+        updated = await session.exec(
+            update(AgentNotification)
+            .where(
+                AgentNotification.id == notification_id,
+                AgentNotification.status == AgentNotificationStatus.PENDING.value,
+            )
+            .values(
+                status=AgentNotificationStatus.PROCESSING.value,
+                started_at=now,
+                updated_at=now,
+            )
+        )
+        if updated.rowcount != 1:
+            await session.rollback()
+            return None
         await session.commit()
-        await session.refresh(notification)
-        return snapshot_from_notification(notification)
+        claimed = await session.get(AgentNotification, notification_id)
+        return snapshot_from_notification(claimed) if claimed is not None else None
 
 
 async def has_pending_notification(
     *,
     session_id: str,
     target_agent_code: str | None = None,
+    target_agent_instance_id: str | None = None,
 ) -> bool:
     async with get_async_session() as session:
         statement = select(AgentNotification.id).where(
@@ -121,8 +259,24 @@ async def has_pending_notification(
         )
         if target_agent_code is not None:
             statement = statement.where(AgentNotification.target_agent_code == target_agent_code)
+        if target_agent_instance_id is not None:
+            statement = statement.where(AgentNotification.target_agent_instance_id == target_agent_instance_id)
         notification_id = (await session.exec(
             statement
+            .limit(1)
+        )).first()
+        return notification_id is not None
+
+
+async def has_pending_main_agent_notification(*, session_id: str) -> bool:
+    async with get_async_session() as session:
+        notification_id = (await session.exec(
+            select(AgentNotification.id)
+            .where(
+                AgentNotification.session_id == session_id,
+                AgentNotification.status == AgentNotificationStatus.PENDING.value,
+                AgentNotification.target_agent_instance_id.like(f"{MAIN_AGENT_INSTANCE_PREFIX}%"),
+            )
             .limit(1)
         )).first()
         return notification_id is not None
@@ -154,18 +308,24 @@ async def release_notification(notification_id: str) -> AgentNotificationSnapsho
         return snapshot_from_notification(notification)
 
 
-async def cancel_session_notifications(session_id: str, error: str = "") -> list[AgentNotificationSnapshot]:
+async def cancel_session_notifications(
+    session_id: str,
+    error: str = "",
+    *,
+    target_agent_instance_id: str | None = None,
+) -> list[AgentNotificationSnapshot]:
     now = datetime.now()
     async with get_async_session() as session:
-        rows = (await session.exec(
-            select(AgentNotification).where(
-                AgentNotification.session_id == session_id,
-                AgentNotification.status.in_([
-                    AgentNotificationStatus.PENDING.value,
-                    AgentNotificationStatus.PROCESSING.value,
-                ]),
-            )
-        )).all()
+        statement = select(AgentNotification).where(
+            AgentNotification.session_id == session_id,
+            AgentNotification.status.in_([
+                AgentNotificationStatus.PENDING.value,
+                AgentNotificationStatus.PROCESSING.value,
+            ]),
+        )
+        if target_agent_instance_id is not None:
+            statement = statement.where(AgentNotification.target_agent_instance_id == target_agent_instance_id)
+        rows = (await session.exec(statement)).all()
         for notification in rows:
             notification.status = AgentNotificationStatus.CANCELED.value
             notification.error = error
@@ -227,14 +387,17 @@ def snapshot_from_notification(notification: AgentNotification) -> AgentNotifica
         id=notification.id,
         session_id=notification.session_id,
         target_agent_code=notification.target_agent_code,
+        target_agent_instance_id=notification.target_agent_instance_id,
+        nested_for_agent_code=notification.nested_for_agent_code,
+        nested_call_id=notification.nested_call_id,
         kind=_coerce_kind(notification.kind),
         status=_coerce_status(notification.status),
         run_id=notification.run_id,
         payload=payload,
         error=notification.error,
-        sandbox_container_id=_coerce_container_id(payload.get("sandbox_container_id")),
-        sandbox_container_generation=_coerce_int(payload.get("sandbox_container_generation")),
-        sandbox_skill_metadata=_coerce_string_tuple(payload.get("sandbox_skill_metadata")),
+        sandbox_container_id=notification.sandbox_container_id,
+        sandbox_container_generation=notification.sandbox_container_generation,
+        sandbox_skill_metadata=_coerce_string_tuple(notification.sandbox_skill_metadata),
         created_at=notification.created_at,
         updated_at=notification.updated_at,
         started_at=notification.started_at,
@@ -256,23 +419,6 @@ def _coerce_status(value: AgentNotificationStatus | str) -> AgentNotificationSta
 
 def _coerce_payload(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
-
-
-def _coerce_container_id(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        integer = int(value)
-    except (TypeError, ValueError):
-        return None
-    return integer if integer > 0 else None
-
-
-def _coerce_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _coerce_string_tuple(value: Any) -> tuple[str, ...]:

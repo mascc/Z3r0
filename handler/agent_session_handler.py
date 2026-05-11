@@ -9,7 +9,7 @@ from fastapi import WebSocket, WebSocketDisconnect, status as ws_status
 from pydantic import ValidationError
 
 from core.subordinates import subscribe_session_events, unsubscribe_session_events
-from core.context import AgentRuntimeContext, AgentUserContext
+from core.context import AgentRuntimeContext, AgentUserContext, main_agent_instance_id
 from core.runtime import get_agent_pool
 from core.tools import SANDBOX_SKILLS_DIR, current_knowledge_generation
 from logger import get_logger
@@ -28,6 +28,7 @@ from schema.agent_session_schema import (
 )
 from schema.response_schema import CommonResponse
 from service import agent_session_service
+from service import agent_notification_service
 from service.sandbox_container_service import resolve_sandbox_container_tool_binding
 from service.sandbox_container_service import execute_sandbox_container_command
 
@@ -87,6 +88,7 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
     notification_runner: asyncio.Task | None = None
     send_lock = asyncio.Lock()
     subscriber = await subscribe_session_events(session_id)
+    notification_wakeups = await agent_notification_service.subscribe_session_notification_wakeups(session_id)
 
     def _set_notification_runner(task: asyncio.Task | None) -> None:
         nonlocal notification_runner
@@ -96,6 +98,16 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
         websocket,
         session_id,
         subscriber,
+        user,
+        send_lock,
+        lambda: runner,
+        lambda: notification_runner,
+        lambda task: _set_notification_runner(task),
+    ))
+    notification_wakeup_forwarder = asyncio.create_task(_forward_notification_wakeups(
+        websocket,
+        session_id,
+        notification_wakeups,
         user,
         send_lock,
         lambda: runner,
@@ -177,7 +189,9 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
         await _close_silently(websocket)
     finally:
         await unsubscribe_session_events(session_id, subscriber)
+        await agent_notification_service.unsubscribe_session_notification_wakeups(session_id, notification_wakeups)
         await _cancel_task(forwarder)
+        await _cancel_task(notification_wakeup_forwarder)
 
 
 async def _run_turn(
@@ -311,6 +325,34 @@ async def _forward_subagent_events(
         logger.debug("subagent event forwarding stopped session=%s", session_id, exc_info=True)
 
 
+async def _forward_notification_wakeups(
+    websocket: WebSocket,
+    session_id: str,
+    queue: asyncio.Queue[str],
+    user: AuthUser,
+    send_lock: asyncio.Lock,
+    get_runner: Callable[[], asyncio.Task | None],
+    get_notification_runner: Callable[[], asyncio.Task | None],
+    set_notification_runner: Callable[[asyncio.Task | None], None],
+) -> None:
+    try:
+        while True:
+            await queue.get()
+            _schedule_notification_drain(
+                websocket,
+                session_id,
+                user,
+                send_lock,
+                get_runner,
+                get_notification_runner,
+                set_notification_runner,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("notification wakeup forwarding stopped session=%s", session_id, exc_info=True)
+
+
 def _schedule_notification_drain(
     websocket: WebSocket,
     session_id: str,
@@ -426,6 +468,7 @@ async def _build_runtime_context(
         session_id=session_id,
         user=_agent_user_context(user),
         agent_code=agent_code,
+        agent_instance_id=main_agent_instance_id(session_id, user.id, agent_code) if agent_code else "",
         knowledge_generation=current_knowledge_generation(),
         sandbox_container_id=selected_container_id,
         sandbox_container_generation=selected_container_generation,
@@ -438,6 +481,7 @@ def _build_base_runtime_context(session_id: str, user: AuthUser, agent_code: str
         session_id=session_id,
         user=_agent_user_context(user),
         agent_code=agent_code,
+        agent_instance_id=main_agent_instance_id(session_id, user.id, agent_code) if agent_code else "",
         knowledge_generation=current_knowledge_generation(),
     )
 

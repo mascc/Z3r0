@@ -15,6 +15,7 @@ class AgentSubordinateTaskSnapshot(BaseModel):
     run_id: str
     session_id: str
     parent_agent_code: str
+    parent_agent_instance_id: str = ""
     agent_code: str
     agent_name: str = ""
     status: AgentSubordinateStatus

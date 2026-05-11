@@ -9,6 +9,7 @@ from core.agents import DEFAULT_AGENT_CODE
 from core.events import event_from_subagent_task, events_from_sdk_message
 from core.runtime import get_agent_pool, get_agent_registry
 from core.session import fetch_stored_items
+from core.jobs import cancel_session_async_sandbox_commands
 from database import get_async_session
 from logger import get_logger
 from model.agent_session_meta_model import AgentSessionMeta
@@ -194,6 +195,7 @@ async def replay_session_events(
         task_events_by_call_id.setdefault(task.nested_call_id, []).append(event_from_subagent_task(
             run_id=task.run_id,
             parent_agent_code=task.parent_agent_code,
+            parent_agent_instance_id=task.parent_agent_instance_id,
             agent_code=task.agent_code,
             agent_name=task.agent_name,
             status=task.status,
@@ -250,6 +252,7 @@ async def delete_session(
             return False
 
     await cancel_session_subagent_runs(session_id)
+    await cancel_session_async_sandbox_commands(session_id)
     await get_agent_pool().discard(session_id)
 
     async with get_async_session() as session:

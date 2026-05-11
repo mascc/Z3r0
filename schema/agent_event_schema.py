@@ -87,6 +87,7 @@ class SubagentTaskEvent(_AgentScopedEvent):
     type: Literal[AgentEventTypeSchema.SUBAGENT_TASK] = AgentEventTypeSchema.SUBAGENT_TASK
     run_id: str
     parent_agent_code: str = ""
+    parent_agent_instance_id: str = ""
     agent_code: str
     status: AgentSubordinateStatus
     result: str = ""

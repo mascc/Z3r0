@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from config import ROOT_PATH, get_config
 from core.subordinates import start_subagent_runtime, stop_subagent_runtime
 from core.runtime import get_agent_pool
+from core.jobs import stop_async_sandbox_commands
 from database import close_engine, create_all_tables, init_engine
 from logger import get_logger
 from middleware.auth import JwtAuthMiddleware
@@ -102,6 +103,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         await stop_sandbox_container_status_monitor()
         await invalidate_all_agent_tool_bindings()
         await stop_subagent_runtime()
+        await stop_async_sandbox_commands()
         await get_agent_pool().stop()
         await close_engine()
 

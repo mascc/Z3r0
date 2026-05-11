@@ -13,6 +13,9 @@ Use this skill when the task requires direct sandbox operations, including envir
 
 - Act directly when the requested work can be completed inside the sandbox.
 - Choose the simplest reliable command or script for the task.
+- Use `execute_sync_command` for short commands that should finish quickly, such as file inspection, small scripts, quick checks, and bounded reads.
+- Use `execute_async_command` for long-running commands, including port scans, host discovery, service probing, brute-force checks, large downloads, long builds, or any command likely to exceed an interactive turn.
+- Async command completion is routed back only to the exact agent instance that started it. Treat the returned `run_id` and `output_file` as owned by that instance, and continue only after its completion notification or an explicit bounded read is needed.
 - Keep generated files and installed packages scoped to the task whenever possible.
 - Command output larger than the sandbox tool inline limit is saved under `/tmp/z3r0-command-output/` with UUID names like `/tmp/z3r0-command-output/<uuid>.log`; the tool response will include only the path, exit status metadata, byte count, and line count.
 - When a command returns an `output_file`, do not re-run the original command just to inspect output. Read the saved file in bounded chunks, for example `sed -n '1,200p' /tmp/z3r0-command-output/<uuid>.log`, then continue with `sed -n '201,400p' ...` only as needed.

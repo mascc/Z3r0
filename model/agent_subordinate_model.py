@@ -25,6 +25,7 @@ class AgentSubordinateTask(SQLModel, table=True):
         index=True,
     )
     parent_agent_code: str = Field(default="", index=True)
+    parent_agent_instance_id: str = Field(default="", index=True)
     agent_code: str = Field(default="", index=True)
     agent_name: str = ""
     status: AgentSubordinateStatus = Field(

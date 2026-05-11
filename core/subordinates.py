@@ -13,8 +13,10 @@ from agents import Agent, RunContextWrapper, Runner, Tool, TResponseInputItem, f
 from agents.stream_events import AgentUpdatedStreamEvent
 
 from config import get_config
-from core.context import AgentRuntimeContext
+from core.context import AgentRuntimeContext, subagent_instance_id
 from core.events import event_from_sdk_stream
+from core.jobs import cancel_agent_async_sandbox_commands, has_pending_async_sandbox_commands
+from core.notifications import notification_prompt
 from core.session import Z3r0Session
 from database import get_engine
 from logger import get_logger
@@ -29,6 +31,7 @@ from schema.agent_event_schema import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from schema.agent_notification_schema import AgentNotificationSnapshot
 from schema.agent_subordinate_schema import AgentSubordinateStatus, AgentSubordinateTaskSnapshot, AgentSubordinateTaskToolResponse
 from service import agent_subordinate_service
 from service import agent_notification_service
@@ -50,6 +53,7 @@ class _SubagentJob:
     task: asyncio.Task[None]
     done: asyncio.Event
     session_id: str
+    sandbox_container_id: int | None
 
 
 _jobs: dict[str, _SubagentJob] = {}
@@ -215,6 +219,7 @@ async def start_subagent_task_run(
     snapshot = await agent_subordinate_service.create_subagent_task(
         session_id=context.session_id,
         parent_agent_code=parent_agent_code,
+        parent_agent_instance_id=context.agent_instance_id,
         agent_code=agent_code,
         agent_name=code_to_name.get(agent_code, child_agent.name),
         brief=brief,
@@ -223,6 +228,8 @@ async def start_subagent_task_run(
     )
     runtime_context = _clone_context_for_background(context)
     _set_context_agent_code(runtime_context, agent_code)
+    _set_context_agent_instance(runtime_context, subagent_instance_id(snapshot.run_id))
+    _set_context_nested_scope(runtime_context, snapshot.parent_agent_code, snapshot.nested_call_id)
     done = asyncio.Event()
     task = asyncio.create_task(
         _run_subagent_task(
@@ -234,7 +241,12 @@ async def start_subagent_task_run(
         ),
         name=f"subagent-{agent_code}-{snapshot.run_id}",
     )
-    _jobs[snapshot.run_id] = _SubagentJob(task=task, done=done, session_id=snapshot.session_id)
+    _jobs[snapshot.run_id] = _SubagentJob(
+        task=task,
+        done=done,
+        session_id=snapshot.session_id,
+        sandbox_container_id=runtime_context.sandbox_container_id,
+    )
     await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
     logger.info("subagent task scheduled: %s agent=%s", snapshot.run_id, agent_code)
     return snapshot
@@ -257,13 +269,40 @@ async def wait_subagent_task_run(snapshot: AgentSubordinateTaskSnapshot, timeout
 
 
 async def cancel_subagent_task_run(snapshot: AgentSubordinateTaskSnapshot) -> AgentSubordinateTaskSnapshot:
+    agent_instance_id = subagent_instance_id(snapshot.run_id)
     job = _jobs.get(snapshot.run_id)
+    publish_now = job is None or job.task.done()
     if job is not None and not job.task.done():
         job.task.cancel()
+    await cancel_agent_async_sandbox_commands(
+        session_id=snapshot.session_id,
+        agent_instance_id=agent_instance_id,
+    )
+    await agent_notification_service.cancel_session_notifications(
+        snapshot.session_id,
+        _CANCEL_MESSAGE,
+        target_agent_instance_id=agent_instance_id,
+    )
     latest = await agent_subordinate_service.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
     snapshot = latest or snapshot
-    await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
+    if publish_now:
+        await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
     return snapshot
+
+
+async def cancel_sandbox_subagent_runs(container_id: int) -> bool:
+    tasks = [
+        _jobs.pop(run_id).task
+        for run_id, job in list(_jobs.items())
+        if job.sandbox_container_id == container_id
+    ]
+    if not tasks:
+        return False
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    return True
 
 
 async def cancel_session_subagent_runs(session_id: str) -> bool:
@@ -324,6 +363,11 @@ async def start_subagent_runtime() -> None:
     await agent_notification_service.reset_processing_notifications_all()
     stale_snapshots = await agent_subordinate_service.mark_stale_running_subagent_tasks_failed()
     for snapshot in stale_snapshots:
+        await agent_notification_service.cancel_session_notifications(
+            snapshot.session_id,
+            snapshot.error,
+            target_agent_instance_id=subagent_instance_id(snapshot.run_id),
+        )
         await _queue_parent_notification(snapshot)
 
 
@@ -404,14 +448,100 @@ async def _run_subagent_task(
                 agent_config=agent_config,
                 incoming_items=[{"type": "message", "role": "user", "content": snapshot.brief}],
             )
-        stream = Runner.run_streamed(
-            starting_agent=child_agent,
-            input=snapshot.brief,
-            session=memory_session,
+        result = await _run_subagent_turn(
+            prompt=snapshot.brief,
+            snapshot=snapshot,
+            child_agent=child_agent,
+            memory_session=memory_session,
             context=context,
             max_turns=max_turns,
+            buffers=buffers,
         )
-        result = stream
+        while True:
+            notification = await _wait_subagent_notification(snapshot, context)
+            if notification is None:
+                break
+            notification_buffers: dict[str, _DeltaBuffer] = {}
+            notification_result: Any = None
+            try:
+                notification_result = await _run_subagent_turn(
+                    prompt=notification_prompt(notification),
+                    snapshot=snapshot,
+                    child_agent=child_agent,
+                    memory_session=memory_session,
+                    context=context,
+                    max_turns=max_turns,
+                    buffers=notification_buffers,
+                )
+                result = notification_result
+            except asyncio.CancelledError:
+                await agent_notification_service.release_notification(notification.id)
+                raise
+            except Exception as exc:
+                await agent_notification_service.fail_notification(
+                    notification.id,
+                    str(exc) or "subagent notification handling failed",
+                )
+                raise
+            else:
+                await agent_notification_service.complete_notification(notification.id)
+
+        completed = await agent_subordinate_service.complete_subagent_task(snapshot.run_id, _final_text(result))
+        if completed is not None:
+            await _queue_parent_notification(completed, context)
+            await publish_subagent_event(completed.session_id, _task_event(completed))
+    except asyncio.CancelledError:
+        await cancel_agent_async_sandbox_commands(
+            session_id=snapshot.session_id,
+            agent_instance_id=context.agent_instance_id,
+        )
+        await agent_notification_service.cancel_session_notifications(
+            snapshot.session_id,
+            _CANCEL_MESSAGE,
+            target_agent_instance_id=context.agent_instance_id,
+        )
+        canceled = await agent_subordinate_service.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
+        if canceled is not None:
+            await _queue_parent_notification(canceled, context)
+            await publish_subagent_event(canceled.session_id, _task_event(canceled))
+    except Exception as exc:
+        logger.exception("subagent task failed: %s", snapshot.run_id)
+        tagged_error = _tag_nested(ErrorEvent(created_at=datetime.now(), agent_name=child_agent.name, message=f"Subagent failed: {exc}"), snapshot)
+        await publish_subagent_event(snapshot.session_id, tagged_error)
+        await agent_notification_service.cancel_session_notifications(
+            snapshot.session_id,
+            str(exc) or "subagent failed",
+            target_agent_instance_id=context.agent_instance_id,
+        )
+        failed = await agent_subordinate_service.fail_subagent_task(snapshot.run_id, str(exc) or "subagent failed")
+        if failed is not None:
+            await _queue_parent_notification(failed, context)
+            await publish_subagent_event(failed.session_id, _task_event(failed))
+    finally:
+        done.set()
+        current = _jobs.get(snapshot.run_id)
+        if current is not None and current.done is done:
+            _jobs.pop(snapshot.run_id, None)
+
+
+async def _run_subagent_turn(
+    *,
+    prompt: str,
+    snapshot: AgentSubordinateTaskSnapshot,
+    child_agent: Agent,
+    memory_session: Z3r0Session,
+    context: AgentRuntimeContext,
+    max_turns: int,
+    buffers: dict[str, _DeltaBuffer],
+) -> Any:
+    stream = Runner.run_streamed(
+        starting_agent=child_agent,
+        input=prompt,
+        session=memory_session,
+        context=context,
+        max_turns=max_turns,
+    )
+    try:
         async for sdk_event in stream.stream_events():
             if isinstance(sdk_event, AgentUpdatedStreamEvent):
                 continue
@@ -422,31 +552,34 @@ async def _run_subagent_task(
             tagged = _tag_nested(event, snapshot)
             await publish_subagent_event(snapshot.session_id, tagged)
             await _update_progress_from_event(snapshot, event)
-
-        completed = await agent_subordinate_service.complete_subagent_task(snapshot.run_id, _final_text(stream))
-        if completed is not None:
-            await _queue_parent_notification(completed, context)
-            await publish_subagent_event(completed.session_id, _task_event(completed))
     except asyncio.CancelledError:
-        await _flush_partial_context(result, memory_session, buffers)
-        canceled = await agent_subordinate_service.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
-        if canceled is not None:
-            await _queue_parent_notification(canceled, context)
-            await publish_subagent_event(canceled.session_id, _task_event(canceled))
-    except Exception as exc:
-        logger.exception("subagent task failed: %s", snapshot.run_id)
-        await _flush_partial_context(result, memory_session, buffers)
-        tagged_error = _tag_nested(ErrorEvent(created_at=datetime.now(), agent_name=child_agent.name, message=f"Subagent failed: {exc}"), snapshot)
-        await publish_subagent_event(snapshot.session_id, tagged_error)
-        failed = await agent_subordinate_service.fail_subagent_task(snapshot.run_id, str(exc) or "subagent failed")
-        if failed is not None:
-            await _queue_parent_notification(failed, context)
-            await publish_subagent_event(failed.session_id, _task_event(failed))
-    finally:
-        done.set()
-        current = _jobs.get(snapshot.run_id)
-        if current is not None and current.done is done:
-            _jobs.pop(snapshot.run_id, None)
+        await _flush_partial_context(stream, memory_session, buffers)
+        raise
+    except Exception:
+        await _flush_partial_context(stream, memory_session, buffers)
+        raise
+    return stream
+
+
+async def _wait_subagent_notification(
+    snapshot: AgentSubordinateTaskSnapshot,
+    context: AgentRuntimeContext,
+) -> AgentNotificationSnapshot | None:
+    target_agent_instance_id = context.agent_instance_id
+    while True:
+        notification = await agent_notification_service.claim_next_pending_notification(
+            session_id=snapshot.session_id,
+            target_agent_instance_id=target_agent_instance_id,
+        )
+        if notification is not None:
+            return notification
+        if has_pending_async_sandbox_commands(
+            session_id=snapshot.session_id,
+            agent_instance_id=target_agent_instance_id,
+        ):
+            await asyncio.sleep(0.5)
+            continue
+        return None
 
 
 async def _update_progress_from_event(snapshot: AgentSubordinateTaskSnapshot, event: AgentEventSchema) -> None:
@@ -478,6 +611,7 @@ def _task_event(snapshot: AgentSubordinateTaskSnapshot) -> AgentEventSchema:
         nested_call_id=snapshot.nested_call_id,
         run_id=snapshot.run_id,
         parent_agent_code=snapshot.parent_agent_code,
+        parent_agent_instance_id=snapshot.parent_agent_instance_id,
         agent_code=snapshot.agent_code,
         status=snapshot.status,
         result=snapshot.result,
@@ -521,6 +655,9 @@ def _clone_context_for_background(
         session_id=context.session_id,
         user=context.user,
         agent_code=context.agent_code,
+        agent_instance_id=context.agent_instance_id,
+        nested_for_agent_code=context.nested_for_agent_code,
+        nested_call_id=context.nested_call_id,
         knowledge_generation=context.knowledge_generation,
         sandbox_container_id=context.sandbox_container_id,
         sandbox_container_generation=context.sandbox_container_generation,
@@ -535,6 +672,24 @@ def _set_context_agent_code(
 ) -> None:
     target = context.context if isinstance(context, RunContextWrapper) else context
     target.agent_code = agent_code
+
+
+def _set_context_agent_instance(
+    context: AgentRuntimeContext | RunContextWrapper[AgentRuntimeContext],
+    agent_instance_id: str,
+) -> None:
+    target = context.context if isinstance(context, RunContextWrapper) else context
+    target.agent_instance_id = agent_instance_id
+
+
+def _set_context_nested_scope(
+    context: AgentRuntimeContext | RunContextWrapper[AgentRuntimeContext],
+    nested_for_agent_code: str,
+    nested_call_id: str,
+) -> None:
+    target = context.context if isinstance(context, RunContextWrapper) else context
+    target.nested_for_agent_code = nested_for_agent_code
+    target.nested_call_id = nested_call_id
 
 
 def _track_delta(buffers: dict[str, _DeltaBuffer], event: AgentEventSchema) -> None:

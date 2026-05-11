@@ -1640,6 +1640,11 @@
             "title": "Parent Agent Code",
             "type": "string"
           },
+          "parent_agent_instance_id": {
+            "default": "",
+            "title": "Parent Agent Instance Id",
+            "type": "string"
+          },
           "progress": {
             "default": "",
             "title": "Progress",

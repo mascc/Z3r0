@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Column, String, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Column, String, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from schema.agent_notification_schema import AgentNotificationKind, AgentNotificationStatus
@@ -26,6 +26,12 @@ class AgentNotification(SQLModel, table=True):
         index=True,
     )
     target_agent_code: str = Field(default="", index=True)
+    target_agent_instance_id: str = Field(default="", index=True)
+    nested_for_agent_code: str = Field(default="", index=True)
+    nested_call_id: str = Field(default="", index=True)
+    sandbox_container_id: int | None = Field(default=None, index=True)
+    sandbox_container_generation: int = Field(default=0, sa_column=Column(BigInteger, nullable=False))
+    sandbox_skill_metadata: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     kind: AgentNotificationKind = Field(
         default=AgentNotificationKind.SUBAGENT_FINISHED,
         sa_column=_AGENT_NOTIFICATION_KIND_COLUMN,

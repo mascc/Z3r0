@@ -17,10 +17,12 @@ from openai.types.responses import (
 
 from config import get_config
 from core.agents import AgentRegistry, AgentToolSnapshot, SessionAgentGraph
-from core.context import AgentRuntimeContext
+from core.context import AgentRuntimeContext, main_agent_instance_id
 from core.events import event_from_sdk_stream
 from core.session import Z3r0Session
-from core.subordinates import cancel_session_subagent_runs
+from core.subordinates import cancel_sandbox_subagent_runs, cancel_session_subagent_runs
+from core.jobs import cancel_sandbox_async_sandbox_commands, cancel_session_async_sandbox_commands
+from core.notifications import notification_prompt
 from database import get_engine
 from logger import get_logger
 from schema.agent_event_schema import (
@@ -33,7 +35,7 @@ from schema.agent_event_schema import (
     ThinkingDeltaEvent,
     UserMessageEvent,
 )
-from schema.agent_notification_schema import AgentNotificationKind, AgentNotificationSnapshot
+from schema.agent_notification_schema import AgentNotificationSnapshot
 from service import agent_notification_service
 
 
@@ -77,10 +79,13 @@ class AgentSession:
 
     async def stream_notification(
         self, context: AgentRuntimeContext,
+        *,
+        target_agent_instance_id: str | None = None,
     ) -> AsyncIterator[AgentEventSchema]:
         async with self._turn_lock:
             notification = await agent_notification_service.claim_next_pending_notification(
                 session_id=self.session_id,
+                target_agent_instance_id=target_agent_instance_id,
             )
             if notification is None:
                 return
@@ -91,14 +96,14 @@ class AgentSession:
             saw_error = False
             try:
                 async for event in self._run_turn(
-                    _notification_prompt(notification),
+                    notification_prompt(notification),
                     agent_code,
                     notification_context,
                     emit_user_message=False,
                 ):
                     if isinstance(event, ErrorEvent):
                         saw_error = True
-                    yield event
+                    yield _tag_notification_event(event, notification_context)
             except asyncio.CancelledError:
                 await agent_notification_service.release_notification(notification.id)
                 raise
@@ -117,9 +122,12 @@ class AgentSession:
                 if self._current_task is task:
                     self._current_task = None
 
-    async def has_pending_notification(self) -> bool:
+    async def has_pending_notification(self, *, target_agent_instance_id: str | None = None) -> bool:
+        if target_agent_instance_id is None:
+            return await agent_notification_service.has_pending_main_agent_notification(session_id=self.session_id)
         return await agent_notification_service.has_pending_notification(
             session_id=self.session_id,
+            target_agent_instance_id=target_agent_instance_id,
         )
 
     async def interrupt(self) -> bool:
@@ -142,11 +150,12 @@ class AgentSession:
             except asyncio.CancelledError:
                 pass
         canceled_subagents = await cancel_session_subagent_runs(self.session_id)
+        canceled_commands = await cancel_session_async_sandbox_commands(self.session_id)
         canceled_notifications = await agent_notification_service.cancel_session_notifications(
             self.session_id,
             "Agent session tasks canceled by user.",
         )
-        return canceled_subagents or bool(canceled_notifications)
+        return canceled_subagents or canceled_commands or bool(canceled_notifications)
 
     async def shutdown(self) -> None:
         await self.cancel_all()
@@ -173,6 +182,8 @@ class AgentSession:
     ) -> AsyncIterator[AgentEventSchema]:
         graph = self._ensure_agent_graph(agent_code, context)
         context.agent_code = agent_code
+        if not context.agent_instance_id:
+            context.agent_instance_id = main_agent_instance_id(context.session_id, context.user.id, agent_code)
         agent = graph.get(agent_code)
         if emit_user_message:
             yield UserMessageEvent(created_at=datetime.now(), text=text, target_agent_code=agent_code)
@@ -182,6 +193,8 @@ class AgentSession:
             engine=get_engine(),
             viewing_agent_code=agent_code,
             agent_code_to_name=graph.code_to_name(),
+            nested_for_agent_code=context.nested_for_agent_code,
+            nested_call_id=context.nested_call_id,
         )
         # SDK stream events converge into one queue for this turn
         queue: asyncio.Queue[AgentEventSchema | None] = asyncio.Queue()
@@ -344,11 +357,12 @@ class AgentSessionPool:
         entry = self._pool.get(session_id)
         if entry is None:
             canceled_subagents = await cancel_session_subagent_runs(session_id)
+            canceled_commands = await cancel_session_async_sandbox_commands(session_id)
             canceled_notifications = await agent_notification_service.cancel_session_notifications(
                 session_id,
                 "Agent session tasks canceled by user.",
             )
-            return canceled_subagents or bool(canceled_notifications)
+            return canceled_subagents or canceled_commands or bool(canceled_notifications)
         return await entry.session.cancel_all()
 
     async def invalidate_tool_bindings(self, container_id: int | None = None) -> None:
@@ -356,12 +370,15 @@ class AgentSessionPool:
             entry for entry in self._pool.values()
             if container_id is None or entry.session.uses_sandbox_container(container_id)
         ]
-        if not entries:
+        tasks = [entry.session.invalidate_tool_binding() for entry in entries]
+        if container_id is not None:
+            tasks.extend([
+                cancel_sandbox_subagent_runs(container_id),
+                cancel_sandbox_async_sandbox_commands(container_id),
+            ])
+        if not tasks:
             return
-        await asyncio.gather(
-            *(entry.session.invalidate_tool_binding() for entry in entries),
-            return_exceptions=True,
-        )
+        await asyncio.gather(*tasks, return_exceptions=True)
         logger.debug("agent pool invalidated tool bindings container=%s count=%d", container_id, len(entries))
 
     async def _sweep_loop(self) -> None:
@@ -426,35 +443,6 @@ def _build_user_input(text: str) -> list[TResponseInputItem]:
     return [message]
 
 
-def _notification_prompt(notification: AgentNotificationSnapshot) -> str:
-    if notification.kind == AgentNotificationKind.SUBAGENT_FINISHED:
-        payload = notification.payload
-        status = str(payload.get("status") or "")
-        agent_name = str(payload.get("agent_name") or payload.get("agent_code") or "subagent")
-        run_id = str(payload.get("run_id") or notification.run_id)
-        brief = str(payload.get("brief") or "")
-        result = str(payload.get("result") or "")
-        error = str(payload.get("error") or "")
-        body = result if status == "completed" else error
-        return (
-            "# Internal Subagent Completion Notification\n\n"
-            "A delegated subagent task has reached a terminal state. This is an internal runtime notification, "
-            "not a new user message. Do not mention implementation details about notifications.\n\n"
-            f"- run_id: {run_id}\n"
-            f"- subagent: {agent_name}\n"
-            f"- status: {status}\n"
-            f"- original brief: {brief}\n\n"
-            "## Subagent final output\n\n"
-            f"{body}\n\n"
-            "Integrate this result into the current task context and respond to the user only if there is "
-            "a useful coordination update, conclusion, or next action to report."
-        )
-    return (
-        "# Internal Agent Notification\n\n"
-        f"Notification kind: {notification.kind.value}\n"
-        f"Payload: {notification.payload}"
-    )
-
 
 def _context_for_notification(
     base: AgentRuntimeContext,
@@ -464,11 +452,23 @@ def _context_for_notification(
         session_id=base.session_id,
         user=base.user,
         agent_code=notification.target_agent_code,
+        agent_instance_id=notification.target_agent_instance_id,
+        nested_for_agent_code=notification.nested_for_agent_code,
+        nested_call_id=notification.nested_call_id,
         knowledge_generation=base.knowledge_generation,
         sandbox_container_id=notification.sandbox_container_id,
         sandbox_container_generation=notification.sandbox_container_generation,
         sandbox_skill_metadata=notification.sandbox_skill_metadata,
     )
+
+
+def _tag_notification_event(event: AgentEventSchema, context: AgentRuntimeContext) -> AgentEventSchema:
+    if not context.nested_for_agent_code or not hasattr(event, "nested_for"):
+        return event
+    return event.model_copy(update={
+        "nested_for": context.nested_for_agent_code,
+        "nested_call_id": context.nested_call_id,
+    })
 
 
 def _track_delta(buffers: dict[str, _DeltaBuffer], event: AgentEventSchema) -> None:

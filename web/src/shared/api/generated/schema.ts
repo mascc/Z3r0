@@ -1285,6 +1285,11 @@ export interface components {
              */
             parent_agent_code: string;
             /**
+             * Parent Agent Instance Id
+             * @default
+             */
+            parent_agent_instance_id: string;
+            /**
              * Progress
              * @default
              */

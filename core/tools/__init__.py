@@ -7,7 +7,7 @@ from core.tools.knowledge_tool import (
     load_knowledge_metadata,
     update_knowledge,
 )
-from core.tools.sandbox_tool import SANDBOX_SKILLS_DIR, execute_command, load_skill
+from core.tools.sandbox_tool import SANDBOX_SKILLS_DIR, execute_async_command, execute_sync_command, load_skill
 
 
 __all__ = [
@@ -16,7 +16,8 @@ __all__ = [
     "SANDBOX_SKILLS_DIR",
     "create_knowledge",
     "current_knowledge_generation",
-    "execute_command",
+    "execute_async_command",
+    "execute_sync_command",
     "load_knowledge",
     "load_knowledge_metadata",
     "load_skill",

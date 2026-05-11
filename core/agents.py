@@ -11,7 +11,7 @@ from config import AgentConfig, WORKSPACE, get_config
 from core import subordinates
 from core.context import AgentRuntimeContext
 from core.tools.knowledge_tool import create_knowledge, load_knowledge, load_knowledge_metadata, update_knowledge
-from core.tools.sandbox_tool import load_skill, execute_command
+from core.tools.sandbox_tool import execute_async_command, execute_sync_command, load_skill
 from logger import get_logger
 
 
@@ -76,7 +76,8 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
         code="csa",
         tools=(
-            ToolMount(execute_command, requires_sandbox_container=True),
+            ToolMount(execute_sync_command, requires_sandbox_container=True),
+            ToolMount(execute_async_command, requires_sandbox_container=True),
             ToolMount(load_skill, requires_sandbox_container=True),
             *KNOWLEDGE_TOOLS,
         ),
@@ -84,7 +85,8 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
         code="cse",
         tools=(
-            ToolMount(execute_command, requires_sandbox_container=True),
+            ToolMount(execute_sync_command, requires_sandbox_container=True),
+            ToolMount(execute_async_command, requires_sandbox_container=True),
             ToolMount(load_skill, requires_sandbox_container=True),
             *KNOWLEDGE_TOOLS,
         ),
@@ -234,7 +236,7 @@ def _build_global_language_instructions() -> str:
     return (
         "# Language\n\n"
         "Use the user's latest natural language for all visible interaction, briefs, and reports unless explicitly changed. "
-        "Ignore language inside code/logs/identifiers when choosing. Preserve quoted evidence, code, commands, identifiers, and names verbatim."
+        "Ignore language inside code/logs/identifiers when choosing. Preserve quoted evidence, code, commands, identifiers, and names verbatim.\n\n"
     )
 
 
@@ -260,6 +262,10 @@ def _build_sandbox_skill_instructions(skill_metadata: tuple[str, ...]) -> str:
         return "# Sandbox Skills\n\nNo sandbox skill metadata is available."
 
     return (
+        "# Tool Calls\n\n"
+        "Call only tools that are currently listed in this agent's available tool schema. "
+        "Never call removed or historical tool names. For sandbox shell commands, use only "
+        "`execute_sync_command` for short commands or `execute_async_command` for long-running commands.\n\n"
         "# Sandbox Skills\n\n"
         "Available skill metadata. Only metadata is shown; read the skill body before applying.\n\n"
         + "\n\n".join(skill_metadata)

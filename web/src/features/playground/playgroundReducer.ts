@@ -40,6 +40,7 @@ export type SubagentExecutionItem = {
   createdAt: SubagentTaskEvent["created_at"];
   runId: SubagentTaskEvent["run_id"];
   parentAgentCode: SubagentTaskEvent["parent_agent_code"];
+  parentAgentInstanceId: SubagentTaskEvent["parent_agent_instance_id"];
   agentCode: SubagentTaskEvent["agent_code"];
   nestedCallId: SubagentTaskEvent["nested_call_id"];
   status: SubagentTaskEvent["status"];
@@ -433,6 +434,7 @@ function subagentExecutionItemFromEvent(event: SubagentTaskEvent): SubagentExecu
     createdAt: event.created_at,
     runId: event.run_id,
     parentAgentCode: event.parent_agent_code,
+    parentAgentInstanceId: event.parent_agent_instance_id,
     agentCode: event.agent_code,
     nestedCallId: event.nested_call_id,
     status: event.status,

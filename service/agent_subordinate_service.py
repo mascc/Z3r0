@@ -24,6 +24,7 @@ async def create_subagent_task(
     *,
     session_id: str,
     parent_agent_code: str,
+    parent_agent_instance_id: str,
     agent_code: str,
     agent_name: str,
     brief: str,
@@ -31,10 +32,12 @@ async def create_subagent_task(
     owner_id: int,
 ) -> AgentSubordinateTaskSnapshot:
     now = datetime.now()
+    run_id = str(uuid4())
     task = AgentSubordinateTask(
-        run_id=str(uuid4()),
+        run_id=run_id,
         session_id=session_id,
         parent_agent_code=parent_agent_code,
+        parent_agent_instance_id=parent_agent_instance_id,
         agent_code=agent_code,
         agent_name=agent_name,
         status=AgentSubordinateStatus.RUNNING.value,
@@ -207,6 +210,7 @@ def snapshot_from_task(task: AgentSubordinateTask) -> AgentSubordinateTaskSnapsh
         run_id=task.run_id,
         session_id=task.session_id,
         parent_agent_code=task.parent_agent_code,
+        parent_agent_instance_id=task.parent_agent_instance_id,
         agent_code=task.agent_code,
         agent_name=task.agent_name,
         status=_coerce_subagent_status(task.status),

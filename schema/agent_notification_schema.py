@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class AgentNotificationKind(StrEnum):
     SUBAGENT_FINISHED = "subagent_finished"
+    ASYNC_COMMAND_FINISHED = "async_command_finished"
 
 
 class AgentNotificationStatus(StrEnum):
@@ -21,6 +22,9 @@ class AgentNotificationSnapshot(BaseModel):
     id: str
     session_id: str
     target_agent_code: str
+    target_agent_instance_id: str
+    nested_for_agent_code: str = ""
+    nested_call_id: str = ""
     kind: AgentNotificationKind
     status: AgentNotificationStatus
     run_id: str = ""
