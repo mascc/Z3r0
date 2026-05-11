@@ -1,6 +1,7 @@
 import asyncio
 import re
 import shlex
+from uuid import uuid4
 
 from agents import RunContextWrapper, function_tool
 
@@ -12,6 +13,56 @@ from utils.markdown import markdown_body_without_front_matter
 
 _SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 SANDBOX_SKILLS_DIR = "/root/.agents/skills"
+_COMMAND_INLINE_OUTPUT_MAX_BYTES = 32 * 1024
+_COMMAND_OUTPUT_CHUNK_LINE_COUNT = 200
+_COMMAND_OUTPUT_DIR = "/tmp/z3r0-command-output"
+
+
+def _build_output_filtered_command(command: str, output_path: str) -> str:
+    quoted_command = shlex.quote(command)
+    quoted_output_dir = shlex.quote(_COMMAND_OUTPUT_DIR)
+    quoted_output_path = shlex.quote(output_path)
+    first_chunk_end = _COMMAND_OUTPUT_CHUNK_LINE_COUNT
+    second_chunk_start = first_chunk_end + 1
+    second_chunk_end = first_chunk_end + _COMMAND_OUTPUT_CHUNK_LINE_COUNT
+    return "\n".join(
+        (
+            "set +e",
+            f"output_dir={quoted_output_dir}",
+            f"output_path={quoted_output_path}",
+            f"inline_limit={_COMMAND_INLINE_OUTPUT_MAX_BYTES}",
+            "mkdir -p \"$output_dir\" || exit 125",
+            "rm -f \"$output_path\"",
+            ": > \"$output_path\" || exit 125",
+            f"/bin/sh -lc {quoted_command} > \"$output_path\" 2>&1 &",
+            "command_pid=$!",
+            "trap 'kill -TERM \"$command_pid\" 2>/dev/null' TERM INT HUP",
+            "wait \"$command_pid\"",
+            "command_exit_code=$?",
+            "trap - TERM INT HUP",
+            "output_bytes=$(wc -c < \"$output_path\" 2>/dev/null | tr -d '[:space:]')",
+            "output_lines=$(sed -n '$=' \"$output_path\" 2>/dev/null | tr -d '[:space:]')",
+            "case \"$output_bytes\" in ''|*[!0-9]*) output_bytes=0 ;; esac",
+            "case \"$output_lines\" in ''|*[!0-9]*) output_lines=0 ;; esac",
+            "if [ \"$output_bytes\" -le \"$inline_limit\" ]; then",
+            "  cat \"$output_path\"",
+            "  rm -f \"$output_path\"",
+            "else",
+            "  printf '%s\\n' 'Command output was too large to inline.'",
+            "  printf 'output_file: %s\\n' \"$output_path\"",
+            "  printf 'bytes: %s\\n' \"$output_bytes\"",
+            "  printf 'lines: %s\\n' \"$output_lines\"",
+            "  printf 'inline_limit_bytes: %s\\n' \"$inline_limit\"",
+            f"  printf \"read_chunks: sed -n '1,{first_chunk_end}p' %s\\n\" \"$output_path\"",
+            f"  printf \"next_chunk: sed -n '{second_chunk_start},{second_chunk_end}p' %s\\n\" \"$output_path\"",
+            "fi",
+            "exit \"$command_exit_code\"",
+        )
+    )
+
+
+def _new_command_output_path() -> str:
+    return f"{_COMMAND_OUTPUT_DIR}/{uuid4().hex}.log"
 
 
 @function_tool
@@ -31,9 +82,18 @@ async def execute_command(ctx: RunContextWrapper[AgentRuntimeContext], command: 
             type=ToolResultTypeSchema.COMMAND_EXECUTION,
             output="No sandbox container selected.",
         ).model_dump_json()
+    if not command.strip():
+        return ToolResultSchema(
+            status=ToolResultStatusSchema.ERROR,
+            type=ToolResultTypeSchema.COMMAND_EXECUTION,
+            output="sandbox container command is required",
+        ).model_dump_json()
 
     try:
-        result = await execute_sandbox_container_command(id=container_id, command=command)
+        result = await execute_sandbox_container_command(
+            id=container_id,
+            command=_build_output_filtered_command(command, _new_command_output_path()),
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:

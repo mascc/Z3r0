@@ -14,6 +14,10 @@ Use this skill when the task requires direct sandbox operations, including envir
 - Act directly when the requested work can be completed inside the sandbox.
 - Choose the simplest reliable command or script for the task.
 - Keep generated files and installed packages scoped to the task whenever possible.
+- Command output larger than the sandbox tool inline limit is saved under `/tmp/z3r0-command-output/` with UUID names like `/tmp/z3r0-command-output/<uuid>.log`; the tool response will include only the path, exit status metadata, byte count, and line count.
+- When a command returns an `output_file`, do not re-run the original command just to inspect output. Read the saved file in bounded chunks, for example `sed -n '1,200p' /tmp/z3r0-command-output/<uuid>.log`, then continue with `sed -n '201,400p' ...` only as needed.
+- Never `cat` an entire large `output_file` back into the conversation. Use line-bounded `sed`, `awk`, `head`, `tail`, `grep -n`, or `wc -l` commands to inspect only the relevant ranges.
+- Delete stale files under `/tmp/z3r0-command-output/` only after the task no longer needs them.
 - Report the meaningful result: changed files, commands run, outputs that matter, and any failure that affects completion.
 
 ## Available Tools
