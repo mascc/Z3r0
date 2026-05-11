@@ -53,7 +53,6 @@ class AgentToolSnapshot:
         )
 
 
-DEFAULT_AGENT_CODE = "cso"
 KNOWLEDGE_TOOLS = (
     ToolMount(load_knowledge),
     ToolMount(create_knowledge),
@@ -66,15 +65,15 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         tools=KNOWLEDGE_TOOLS,
         subagents=(
             SubagentMount(
-                code="csa",
+                code="cie",
             ),
             SubagentMount(
-                code="cse",
+                code="cpe",
             ),
         ),
     ),
     AgentSpec(
-        code="csa",
+        code="cie",
         tools=(
             ToolMount(execute_sync_command, requires_sandbox_container=True),
             ToolMount(execute_async_command, requires_sandbox_container=True),
@@ -83,7 +82,7 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         ),
     ),
     AgentSpec(
-        code="cse",
+        code="cpe",
         tools=(
             ToolMount(execute_sync_command, requires_sandbox_container=True),
             ToolMount(execute_async_command, requires_sandbox_container=True),
@@ -92,6 +91,9 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         ),
     ),
 )
+
+
+DEFAULT_AGENT_CODE = _AGENT_SPECS[0].code
 
 
 class AgentRegistry:

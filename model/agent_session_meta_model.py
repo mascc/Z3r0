@@ -17,6 +17,6 @@ class AgentSessionMeta(SQLModel, table=True):
     )
     session_type: SessionType = Field(default=SessionType.CHAT, index=True)
     title: str = ""
-    agent_code: str = Field(default="cso")
+    agent_code: str = Field(default="")
     owner_id: int = Field(default=0, index=True)
     created_at: datetime = Field(default_factory=datetime.now)

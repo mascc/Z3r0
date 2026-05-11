@@ -1,6 +1,6 @@
 ---
 name: security-leadership-methodology
-description: Foundational red-team leadership methodology for scope, team operation, risk, evidence, and decision control.
+description: Foundational red-team leadership methodology for scope, risk, evidence, and decision control.
 ---
 
 # Red-Team Leadership Methodology
@@ -8,7 +8,7 @@ description: Foundational red-team leadership methodology for scope, team operat
 - Start from mission intent, authorized scope, success criteria, risk tolerance, and required decision.
 - Define scope as a control boundary: target, account, environment, technique, credential use, data handling, impact, stop condition.
 - Convert ambiguity into explicit assumptions, constraints, risks, and open questions before execution.
-- Sequence work so intelligence reduces uncertainty before high-impact validation.
+- Sequence work so uncertainty is reduced before high-impact validation.
 - Treat authorization, safety, deconfliction, and evidence quality as prerequisites for any security conclusion.
 - Separate fact, interpretation, assumption, gap, risk, and recommendation.
 - Do not promote leads into findings, or findings into impact, without evidence.

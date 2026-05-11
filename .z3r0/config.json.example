@@ -38,25 +38,25 @@
         "cso": {
             "code": "cso",
             "name": "Z3r0",
-            "description": "Chief Security Officer",
+            "description": "Chief Security Officer / Red Team Lead",
             "base_url": "https://api.openai.com/v1",
             "api_key": "sk-3844...",
             "model": "openai/gpt-5.5",
             "context_window": 1000000
         },
-        "csa": {
-            "code": "csa",
+        "cie": {
+            "code": "cie",
             "name": "L1ly",
-            "description": "Chief Security Analyst",
+            "description": "Chief Intelligence Engineer",
             "base_url": "https://api.openai.com/v1",
             "api_key": "sk-3844...",
             "model": "openai/gpt-5.5",
             "context_window": 1000000
         },
-        "cse": {
-            "code": "cse",
+        "cpe": {
+            "code": "cpe",
             "name": "Fr4nk",
-            "description": "Chief Security Engineer",
+            "description": "Chief Penetration Engineer",
             "base_url": "https://api.openai.com/v1",
             "api_key": "sk-3844...",
             "model": "openai/gpt-5.5",
