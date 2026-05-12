@@ -20,12 +20,43 @@ RUN set -eux; \
     find /usr/local/lib/node_modules/dev-browser -type f \( -name '*.md' -o -name '*.map' -o -name 'CHANGELOG*' \) -delete; \
     rm -rf /root/.npm /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
 
+FROM debian:trixie-slim AS ghidra-builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GHIDRA_VERSION=12.0.4
+ARG GHIDRA_BUILD=20260303
+ARG GHIDRA_URL=https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_BUILD}.zip
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends binutils ca-certificates curl unzip; \
+    curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip; \
+    unzip -q /tmp/ghidra.zip -d /opt; \
+    ghidra_dir="$(find /opt -maxdepth 1 -type d -name 'ghidra_*_PUBLIC' | sort | head -n 1)"; \
+    test -n "$ghidra_dir"; \
+    mv "$ghidra_dir" /opt/ghidra; \
+    find /opt/ghidra -type d \( \
+      -name '.git' -o \
+      -name '__pycache__' -o \
+      -name 'docs' -o \
+      -name 'GPL' \
+    \) -prune -exec rm -rf '{}' +; \
+    find /opt/ghidra -type f \( \
+      -name '*.md' -o \
+      -name '*.pdb' \
+    \) -delete; \
+    find /opt/ghidra -type f -name '*.so' -exec strip --strip-unneeded '{}' + 2>/dev/null || true; \
+    rm -rf /tmp/* /var/tmp/* /var/lib/apt/lists/* /var/cache/apt/*
+
 FROM debian:trixie-slim
 
 ENV HOME=/root \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    DISPLAY=:0
+    DISPLAY=:0 \
+    JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+    GHIDRA_HOME=/opt/ghidra \
+    PATH=/opt/ghidra:/opt/ghidra/support:/usr/lib/jvm/java-21-openjdk-amd64/bin:$PATH
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -41,8 +72,12 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates \
+      binutils \
       curl \
+      file \
       fonts-droid-fallback \
+      g++ \
+      gcc \
       libasound2t64 \
       libatk-bridge2.0-0t64 \
       libatk1.0-0t64 \
@@ -64,9 +99,13 @@ RUN set -eux; \
       libxfixes3 \
       libxkbcommon0 \
       libxrandr2 \
+      libc6-dev \
+      make \
       nodejs \
       novnc \
+      openjdk-21-jdk \
       npm \
+      pkg-config \
       python3 \
       python3-pip \
       supervisor \
@@ -82,6 +121,7 @@ COPY --from=browser-builder /root/.dev-browser /root/.dev-browser
 COPY --from=browser-builder /root/.cache /root/.cache
 COPY --from=browser-builder /usr/local/bin/dev-browser /usr/local/bin/dev-browser
 COPY --from=browser-builder /usr/local/lib/node_modules/dev-browser /usr/local/lib/node_modules/dev-browser
+COPY --from=ghidra-builder /opt/ghidra /opt/ghidra
 RUN set -eux; \
     chromium_binary="$(find /root/.cache /root/.dev-browser -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' -o -name chromium -o -name chrome \) -perm /111 | sort | head -n 1)"; \
     if [ -z "$chromium_binary" ]; then \
@@ -90,12 +130,18 @@ RUN set -eux; \
       exit 1; \
     fi; \
     "$chromium_binary" --version; \
-    ln -sf "$chromium_binary" /usr/local/bin/dev-browser-chromium
+    ln -sf "$chromium_binary" /usr/local/bin/dev-browser-chromium; \
+    ln -sf /opt/ghidra/ghidraRun /usr/local/bin/ghidra; \
+    ln -sf /opt/ghidra/support/analyzeHeadless /usr/local/bin/analyzeHeadless; \
+    java -version; \
+    test -x /opt/ghidra/ghidraRun; \
+    test -x /opt/ghidra/support/analyzeHeadless
 
 COPY --from=proxy-builder --chmod=755 /sandbox-proxy /usr/local/bin/sandbox-proxy
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 COPY supervisord.conf /supervisord.conf
 COPY .agents /root/.agents
+RUN chmod 755 /root/.agents/skills/ghidra/scripts/*.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
