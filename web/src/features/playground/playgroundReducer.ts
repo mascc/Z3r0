@@ -137,7 +137,7 @@ function routeToTopLevel(state: ChatState, event: AgentContentEvent): ChatState 
   const lastNode = nodes[lastIndex];
 
   let agent: AgentNode;
-  if (lastNode?.kind === "agent") {
+  if (lastNode?.kind === "agent" && state.streaming) {
     agent = cloneAgentNode(lastNode);
     if (!agent.createdAt) agent.createdAt = event.created_at;
     nodes[lastIndex] = agent;

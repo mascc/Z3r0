@@ -114,6 +114,18 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
 DEFAULT_AGENT_CODE = _AGENT_SPECS[0].code
 
 
+MARKDOWN_OUTPUT_INSTRUCTIONS = """# Response Formatting
+
+Always write user-facing responses as valid GitHub-Flavored Markdown.
+
+- Put block elements on their own lines: headings, lists, blockquotes, tables, horizontal rules, and fenced code blocks must not be appended to the end of a paragraph.
+- Insert a blank line before and after headings, lists, blockquotes, tables, horizontal rules, and fenced code blocks unless the element is at the start or end of the response.
+- Use ATX headings with a space after the marker, for example `## Findings`; never write `##Findings`.
+- Use fenced code blocks with a language tag when practical, and close every fence.
+- Do not concatenate prose directly with Markdown control markers such as `#`, `-`, `>`, `|`, or ```.
+"""
+
+
 class AgentRegistry:
     def __init__(self, specs: tuple[AgentSpec, ...] = _AGENT_SPECS) -> None:
         self._specs: dict[str, AgentSpec] = {spec.code: spec for spec in specs}
@@ -249,7 +261,7 @@ def _build_instructions(
     include_sandbox_skills: bool,
     include_agent_knowledges: bool,
 ) -> str:
-    parts = [soul, rules]
+    parts = [soul, rules, MARKDOWN_OUTPUT_INSTRUCTIONS]
     if include_agent_knowledges:
         parts.append(_build_agent_knowledge_instructions(agent_code, load_knowledge_metadata(agent_code)))
     if include_sandbox_skills and tool_snapshot.sandbox_container_id is not None:
