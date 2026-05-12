@@ -1,20 +1,18 @@
-"""Background sandbox command execution and completion notifications."""
+"""Background sandbox command execution."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from core.context import AgentRuntimeContext
 from logger import get_logger
-from service import agent_notification_service
+from service import sandbox_async_job_service
 from service.sandbox_container_service import execute_sandbox_container_command
 
 
 logger = get_logger(__name__)
-
-
-_ASYNC_COMMAND_POLL_INTERVAL_SECONDS = 1.0
 
 
 @dataclass
@@ -23,31 +21,29 @@ class _AsyncCommandJob:
     session_id: str
     agent_instance_id: str
     sandbox_container_id: int | None
-    notifying: bool = False
 
 
 _jobs: dict[str, _AsyncCommandJob] = {}
+_AsyncCommandJobPredicate = Callable[[str, _AsyncCommandJob], bool]
+
+
+async def start_async_sandbox_runtime() -> None:
+    await sandbox_async_job_service.mark_stale_running_async_jobs_failed()
 
 
 def start_async_sandbox_command(
     *,
     run_id: str,
     context: AgentRuntimeContext,
-    command: str,
-    output_path: str,
-    status_command: str,
+    wrapped_command: str,
     stat_command: str,
-    cancel_command: str,
 ) -> None:
     task = asyncio.create_task(
         _run_async_sandbox_command(
             run_id=run_id,
             context=context,
-            command=command,
-            output_path=output_path,
-            status_command=status_command,
+            wrapped_command=wrapped_command,
             stat_command=stat_command,
-            cancel_command=cancel_command,
         ),
         name=f"sandbox-async-command-{run_id}",
     )
@@ -60,147 +56,95 @@ def start_async_sandbox_command(
     task.add_done_callback(lambda completed: _finish_async_sandbox_command(run_id, completed))
 
 
-def has_pending_async_sandbox_commands(
-    *,
-    session_id: str,
-    agent_instance_id: str,
-) -> bool:
-    return any(
-        job.session_id == session_id
-        and job.agent_instance_id == agent_instance_id
-        and (job.notifying or not job.task.done())
-        for job in _jobs.values()
-    )
-
-
 async def cancel_agent_async_sandbox_commands(
     *,
     session_id: str,
     agent_instance_id: str,
 ) -> bool:
-    tasks = [
-        _jobs.pop(run_id).task
-        for run_id, job in list(_jobs.items())
-        if job.session_id == session_id and job.agent_instance_id == agent_instance_id
-    ]
-    if not tasks:
-        return False
-    for task in tasks:
-        if not task.done():
-            task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    return True
+    runtime_canceled = await _cancel_runtime_jobs(
+        lambda _, job: job.session_id == session_id and job.agent_instance_id == agent_instance_id
+    )
+    snapshots = await sandbox_async_job_service.cancel_running_async_jobs_for_agent(
+        session_id=session_id,
+        agent_instance_id=agent_instance_id,
+        error="Sandbox async job canceled.",
+    )
+    return runtime_canceled or bool(snapshots)
 
 
-async def cancel_sandbox_async_sandbox_commands(container_id: int) -> bool:
-    tasks = [
-        _jobs.pop(run_id).task
-        for run_id, job in list(_jobs.items())
-        if job.sandbox_container_id == container_id
-    ]
-    if not tasks:
-        return False
-    for task in tasks:
-        if not task.done():
-            task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    return True
+async def cancel_async_sandbox_command(run_id: str) -> bool:
+    runtime_canceled = await _cancel_runtime_jobs(lambda candidate, _: candidate == run_id)
+    snapshot = await sandbox_async_job_service.cancel_async_job(run_id, "Sandbox async job cancel requested.")
+    return runtime_canceled or snapshot is not None
+
+
+async def cancel_sandbox_async_commands(container_id: int) -> bool:
+    runtime_canceled = await _cancel_runtime_jobs(lambda _, job: job.sandbox_container_id == container_id)
+    snapshots = await sandbox_async_job_service.cancel_running_async_jobs_for_container(
+        container_id,
+        "Sandbox async job canceled.",
+    )
+    return runtime_canceled or bool(snapshots)
 
 
 async def cancel_session_async_sandbox_commands(session_id: str) -> bool:
-    tasks = [
-        _jobs.pop(run_id).task
-        for run_id, job in list(_jobs.items())
-        if job.session_id == session_id
-    ]
-    if not tasks:
-        return False
-    for task in tasks:
-        if not task.done():
-            task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    return True
+    runtime_canceled = await _cancel_runtime_jobs(lambda _, job: job.session_id == session_id)
+    snapshots = await sandbox_async_job_service.cancel_running_async_jobs_for_session(
+        session_id,
+        "Sandbox async job canceled.",
+    )
+    return runtime_canceled or bool(snapshots)
 
 
 async def stop_async_sandbox_commands() -> None:
-    tasks = [job.task for job in _jobs.values()]
-    _jobs.clear()
-    for task in tasks:
-        if not task.done():
-            task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    await _cancel_runtime_jobs(lambda _, __: True)
+    await sandbox_async_job_service.cancel_running_async_jobs("Sandbox async job canceled by runtime shutdown.")
+
+
+async def _cancel_runtime_jobs(predicate: _AsyncCommandJobPredicate) -> bool:
+    tasks: list[asyncio.Task[None]] = []
+    for run_id, job in list(_jobs.items()):
+        if not predicate(run_id, job):
+            continue
+        _jobs.pop(run_id, None)
+        if not job.task.done():
+            job.task.cancel()
+        tasks.append(job.task)
+    if not tasks:
+        return False
+    await asyncio.gather(*tasks, return_exceptions=True)
+    return True
 
 
 async def _run_async_sandbox_command(
     *,
     run_id: str,
     context: AgentRuntimeContext,
-    command: str,
-    output_path: str,
-    status_command: str,
+    wrapped_command: str,
     stat_command: str,
-    cancel_command: str,
 ) -> None:
     if context.sandbox_container_id is None:
+        await sandbox_async_job_service.fail_async_job(run_id, "No sandbox container selected.")
         return
 
-    exit_code = 1
     try:
-        while True:
-            result = await execute_sandbox_container_command(
-                id=context.sandbox_container_id,
-                command=status_command,
-            )
-            completed_exit_code = _parse_status_exit_code(result.output)
-            if completed_exit_code is not None:
-                exit_code = completed_exit_code
-                break
-            await asyncio.sleep(_ASYNC_COMMAND_POLL_INTERVAL_SECONDS)
+        result = await execute_sandbox_container_command(
+            id=context.sandbox_container_id,
+            command=wrapped_command,
+        )
+        output_bytes, output_lines = await _stat_output_file(context.sandbox_container_id, stat_command)
+        await sandbox_async_job_service.complete_async_job(
+            run_id,
+            exit_code=result.exit_code,
+            output_bytes=output_bytes,
+            output_lines=output_lines,
+        )
     except asyncio.CancelledError:
-        await _cancel_detached_command(context.sandbox_container_id, cancel_command)
+        await sandbox_async_job_service.cancel_async_job(run_id, "Sandbox async job canceled.")
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("async sandbox command execution failed: %s", run_id)
-
-    _mark_async_sandbox_command_notifying(run_id)
-    output_bytes, output_lines = await _stat_output_file(context.sandbox_container_id, stat_command)
-    await agent_notification_service.enqueue_async_command_finished_notification(
-        session_id=context.session_id,
-        target_agent_code=context.agent_code,
-        target_agent_instance_id=context.agent_instance_id,
-        run_id=run_id,
-        command=command,
-        output_file=output_path,
-        exit_code=exit_code,
-        output_bytes=output_bytes,
-        output_lines=output_lines,
-        nested_for_agent_code=context.nested_for_agent_code,
-        nested_call_id=context.nested_call_id,
-        sandbox_container_id=context.sandbox_container_id,
-        sandbox_container_generation=context.sandbox_container_generation,
-        sandbox_skill_metadata=context.sandbox_skill_metadata,
-    )
-
-
-def _parse_status_exit_code(output: str) -> int | None:
-    text = output.strip()
-    if not text:
-        return None
-    first = text.split()[0]
-    try:
-        return int(first)
-    except ValueError:
-        return None
-
-
-async def _cancel_detached_command(container_id: int | None, cancel_command: str) -> None:
-    if container_id is None:
-        return
-    try:
-        await execute_sandbox_container_command(id=container_id, command=cancel_command)
-    except Exception:
-        logger.debug("failed to cancel detached async sandbox command", exc_info=True)
+        await sandbox_async_job_service.fail_async_job(run_id, str(exc) or "Sandbox async job failed.")
 
 
 async def _stat_output_file(container_id: int, stat_command: str) -> tuple[int, int]:
@@ -216,12 +160,6 @@ async def _stat_output_file(container_id: int, stat_command: str) -> tuple[int, 
         return int(parts[0]), int(parts[1])
     except ValueError:
         return 0, 0
-
-
-def _mark_async_sandbox_command_notifying(run_id: str) -> None:
-    job = _jobs.get(run_id)
-    if job is not None:
-        job.notifying = True
 
 
 def _finish_async_sandbox_command(run_id: str, task: asyncio.Task[None]) -> None:

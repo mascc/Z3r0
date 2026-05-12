@@ -97,7 +97,7 @@ async def get_subagent_task_internal(run_id: str) -> AgentSubordinateTaskSnapsho
 async def update_subagent_progress(run_id: str, progress: str) -> AgentSubordinateTaskSnapshot | None:
     async with get_async_session() as session:
         task = await session.get(AgentSubordinateTask, run_id)
-        if task is None or task.status in TERMINAL_SUBAGENT_STATUSES:
+        if task is None or _coerce_subagent_status(task.status) in TERMINAL_SUBAGENT_STATUSES:
             return None
         task.progress = progress
         task.updated_at = datetime.now()
@@ -191,7 +191,7 @@ async def _finish_subagent_task(
         task = await session.get(AgentSubordinateTask, run_id)
         if task is None:
             return None
-        if task.status in TERMINAL_SUBAGENT_STATUSES:
+        if _coerce_subagent_status(task.status) in TERMINAL_SUBAGENT_STATUSES:
             return snapshot_from_task(task)
         task.status = status.value
         task.result = result

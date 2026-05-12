@@ -91,6 +91,8 @@ def _project_visible(
         role = item.get("role")
         item_type = item.get("type")
 
+        # Nested subagent items are scoped to their parent tool call and are replayed in the UI.
+        # Parent model context receives only the subagent task result, not the full nested trace.
         if stored.nested_for:
             continue
 

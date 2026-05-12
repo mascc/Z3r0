@@ -35,4 +35,3 @@ def main_agent_instance_id(session_id: str, user_id: int, agent_code: str) -> st
 
 def subagent_instance_id(run_id: str) -> str:
     return f"{SUBAGENT_INSTANCE_PREFIX}{run_id}"
-

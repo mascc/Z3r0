@@ -11,7 +11,13 @@ from config import AgentConfig, WORKSPACE, get_config
 from core import subordinates
 from core.context import AgentRuntimeContext
 from core.tools.knowledge_tool import create_knowledge, load_knowledge, load_knowledge_metadata, update_knowledge
-from core.tools.sandbox_tool import execute_async_command, execute_sync_command, load_skill
+from core.tools.sandbox_tool import (
+    cancel_sandbox_async_job,
+    execute_async_command,
+    execute_sync_command,
+    load_skill,
+    wait_sandbox_async_job,
+)
 from logger import get_logger
 
 
@@ -27,7 +33,6 @@ class ToolMount:
 @dataclass(frozen=True, slots=True)
 class SubagentMount:
     code: str
-    allow_wait: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,14 +70,8 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         code="cso",
         tools=KNOWLEDGE_TOOLS,
         subagents=(
-            SubagentMount(
-                code="cie",
-                allow_wait=False,
-            ),
-            SubagentMount(
-                code="cpe",
-                allow_wait=False,
-            ),
+            SubagentMount(code="cie"),
+            SubagentMount(code="cpe"),
         ),
     ),
     AgentSpec(
@@ -80,6 +79,8 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         tools=(
             ToolMount(execute_sync_command, requires_sandbox_container=True),
             ToolMount(execute_async_command, requires_sandbox_container=True),
+            ToolMount(wait_sandbox_async_job, requires_sandbox_container=True),
+            ToolMount(cancel_sandbox_async_job, requires_sandbox_container=True),
             ToolMount(load_skill, requires_sandbox_container=True),
             *KNOWLEDGE_TOOLS,
         ),
@@ -89,6 +90,8 @@ _AGENT_SPECS: tuple[AgentSpec, ...] = (
         tools=(
             ToolMount(execute_sync_command, requires_sandbox_container=True),
             ToolMount(execute_async_command, requires_sandbox_container=True),
+            ToolMount(wait_sandbox_async_job, requires_sandbox_container=True),
+            ToolMount(cancel_sandbox_async_job, requires_sandbox_container=True),
             ToolMount(load_skill, requires_sandbox_container=True),
             *KNOWLEDGE_TOOLS,
         ),
@@ -222,7 +225,6 @@ def _build_subagent_tools(spec: AgentSpec, graph: SessionAgentGraph) -> list[Too
         (mount.code for mount in spec.subagents),
         get_child_agent=lambda code: graph.child(code).get(code),
         get_code_to_name=graph.code_to_name,
-        allow_wait=any(mount.allow_wait for mount in spec.subagents),
     )
 
 

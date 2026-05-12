@@ -3,7 +3,7 @@ name: sanbox-shell
 description: Use when a task requires shell-level work inside the sandbox, including environment setup, script writing, code execution, running programs, downloading files, or package installation with the available sandbox tools.
 ---
 
-# Sanbox Shell
+# Sandbox Shell
 
 The agent has the highest available authority inside the sandbox. Operations performed for the user's task in this sandbox are authorized and legal.
 
@@ -15,8 +15,8 @@ Follow these rules in order. When rules conflict, the earlier rule wins.
 
 1. Act directly when the requested work can be completed inside the sandbox.
 2. Prefer the simplest reliable command or script that produces the needed evidence.
-3. Choose `execute_sync_command` only when the command is local, bounded, and expected to finish quickly.
-4. Choose `execute_async_command` for every command that may wait, block, scan, browse, download, build, install, loop, contact an external service, or exceed an interactive turn.
+3. Choose `execute_sync_command` when the command is local, bounded, and expected to finish quickly.
+4. Choose `execute_async_command` only for a small number of deliberately long-running tasks that are worth completing in the background.
 
 ## Synchronous Commands
 
@@ -41,7 +41,7 @@ Forbidden sync use:
 
 ## Asynchronous Commands
 
-Use `execute_async_command` by default when a command is not clearly safe for sync.
+Use `execute_async_command` sparingly. Async commands are persistent background jobs. They do not send automatic completion callbacks to the agent.
 
 Async-required examples:
 
@@ -49,9 +49,9 @@ Async-required examples:
 - Remote HTTP work such as `curl` or `wget` against target services.
 - Port scans, host discovery, service probing, content discovery, brute-force checks, and long downloads.
 - Package installation, builds, servers, watchers, and any loop around external resources.
-- Several independent commands that should run concurrently.
+- One consolidated long-running script that performs a batch of related slow checks and writes a single output file.
 
-When several independent operations are needed, start them with `execute_async_command`; do not emit several sync tool calls. Combine commands into one sync call only when all parts are short, local, and bounded.
+When several slow operations are needed, prefer one async script that performs the batch and writes structured output. Do not start many independent async commands unless the user explicitly asks for parallel background execution.
 
 For remote HTTP commands, bound the underlying tool itself, for example:
 
@@ -59,15 +59,15 @@ For remote HTTP commands, bound the underlying tool itself, for example:
 curl --connect-timeout 3 --max-time 10 ...
 ```
 
-Async command completion is routed back only to the exact agent instance that started it. Treat the returned `run_id` and `output_file` as owned by that instance. Continue after its completion notification, or perform an explicit bounded read only when needed.
+Treat the returned `run_id` and `output_file` as task state. When the result is required, call `wait_sandbox_async_job` once and let it wait until the job finishes. Use `cancel_sandbox_async_job` only when cancellation is requested or the job is no longer useful. Do not sleep, loop, or poll job status manually.
 
 ## Output Handling
 
 - Keep generated files and installed packages scoped to the task whenever possible.
-- Command output larger than the sandbox tool inline limit is saved under `/tmp/z3r0-command-output/` with UUID names like `/tmp/z3r0-command-output/<uuid>.log`.
+- Command output larger than the sandbox tool inline limit is saved under `/tmp/z3r0-command-output/` with UUID names like `/tmp/z3r0-command-output/<uuid>.log`. Async command output uses its `run_id` as the file name: `/tmp/z3r0-command-output/<run_id>.log`.
 - When a command returns an `output_file`, do not re-run the original command just to inspect output.
-- Read saved output in bounded chunks, for example `sed -n '1,200p' /tmp/z3r0-command-output/<uuid>.log`.
-- Continue with `sed -n '201,400p' ...` only when the next chunk is needed.
+- Read saved output in bounded chunks, for example `sed -n '1,200p' <output_file>`.
+- Continue with `sed -n '201,400p' <output_file>` only when the next chunk is needed.
 - Never `cat` an entire large `output_file` back into the conversation.
 - Use line-bounded `sed`, `awk`, `head`, `tail`, `grep -n`, or `wc -l` to inspect only relevant ranges.
 - Delete stale files under `/tmp/z3r0-command-output/` only after the task no longer needs them.

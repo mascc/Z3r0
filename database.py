@@ -5,6 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from config import get_config
 from logger import get_logger
+from model.agent_async_job_model import SandboxAsyncJob
 from model.agent_notification_model import AgentNotification
 from model.agent_subordinate_model import AgentSubordinateTask
 from model.agent_message_meta_model import AgentMessageMeta
@@ -23,7 +24,7 @@ logger = get_logger(__name__)
 _registered_models = [
     SystemUser, SandboxImage, SandboxContainer, WorkProject,
     AgentSessionMeta, AgentMessageMeta, AgentContextCompaction,
-    AgentSubordinateTask, AgentNotification,
+    AgentSubordinateTask, AgentNotification, SandboxAsyncJob,
 ]
 
 _engine: AsyncEngine | None = None

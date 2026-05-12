@@ -21,7 +21,7 @@ from core.context import AgentRuntimeContext, main_agent_instance_id
 from core.events import event_from_sdk_stream
 from core.session import Z3r0Session
 from core.subordinates import cancel_sandbox_subagent_runs, cancel_session_subagent_runs
-from core.jobs import cancel_sandbox_async_sandbox_commands, cancel_session_async_sandbox_commands
+from core.jobs import cancel_sandbox_async_commands, cancel_session_async_sandbox_commands
 from core.notifications import notification_prompt
 from database import get_engine
 from logger import get_logger
@@ -374,7 +374,7 @@ class AgentSessionPool:
         if container_id is not None:
             tasks.extend([
                 cancel_sandbox_subagent_runs(container_id),
-                cancel_sandbox_async_sandbox_commands(container_id),
+                cancel_sandbox_async_commands(container_id),
             ])
         if not tasks:
             return
