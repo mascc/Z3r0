@@ -82,25 +82,96 @@ def _new_command_output_path() -> str:
     return f"{_COMMAND_OUTPUT_DIR}/{uuid4().hex}.log"
 
 
-def _build_async_command(command: str, output_path: str) -> str:
+def _build_async_status_path(output_path: str) -> str:
+    return f"{output_path}.status"
+
+
+def _build_async_pid_path(output_path: str) -> str:
+    return f"{output_path}.pid"
+
+
+def _build_async_start_command(command: str, output_path: str, status_path: str, pid_path: str) -> str:
     quoted_command = shlex.quote(command)
     quoted_output_dir = shlex.quote(_COMMAND_OUTPUT_DIR)
     quoted_output_path = shlex.quote(output_path)
+    quoted_status_path = shlex.quote(status_path)
+    quoted_pid_path = shlex.quote(pid_path)
+    worker = "\n".join(
+        (
+            "set +e",
+            "cleanup_and_exit() {",
+            "  code=${1:-130}",
+            "  if [ -n \"${command_pid:-}\" ]; then",
+            "    kill -TERM \"$command_pid\" 2>/dev/null || true",
+            "    wait \"$command_pid\" 2>/dev/null || true",
+            "  fi",
+            f"  printf '%s\\n' \"$code\" > {quoted_status_path}",
+            f"  rm -f {quoted_pid_path}",
+            "  exit 0",
+            "}",
+            "trap 'cleanup_and_exit 130' TERM INT HUP",
+            f"/bin/sh -lc {quoted_command} > {quoted_output_path} 2>&1 &",
+            "command_pid=$!",
+            f"printf '%s\\n' \"$command_pid\" > {quoted_pid_path}",
+            "wait \"$command_pid\"",
+            "command_exit_code=$?",
+            "trap - TERM INT HUP",
+            f"printf '%s\\n' \"$command_exit_code\" > {quoted_status_path}",
+            f"rm -f {quoted_pid_path}",
+            "exit 0",
+        )
+    )
+    quoted_worker = shlex.quote(worker)
     return "\n".join(
         (
             "set +e",
             f"output_dir={quoted_output_dir}",
             f"output_path={quoted_output_path}",
+            f"status_path={quoted_status_path}",
+            f"pid_path={quoted_pid_path}",
             "mkdir -p \"$output_dir\" || exit 125",
             "rm -f \"$output_path\"",
+            "rm -f \"$status_path\"",
+            "rm -f \"$pid_path\"",
             ": > \"$output_path\" || exit 125",
-            f"/bin/sh -lc {quoted_command} > \"$output_path\" 2>&1 &",
-            "command_pid=$!",
-            "trap 'kill -TERM \"$command_pid\" 2>/dev/null' TERM INT HUP",
-            "wait \"$command_pid\"",
-            "command_exit_code=$?",
-            "trap - TERM INT HUP",
-            "exit \"$command_exit_code\"",
+            "if command -v setsid >/dev/null 2>&1; then",
+            f"  setsid /bin/sh -lc {quoted_worker} </dev/null >/dev/null 2>&1 &",
+            "else",
+            f"  /bin/sh -lc {quoted_worker} </dev/null >/dev/null 2>&1 &",
+            "fi",
+            "starter_pid=$!",
+            "for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do",
+            "  if [ -s \"$pid_path\" ] || [ -s \"$status_path\" ]; then break; fi",
+            "  sleep 0.1",
+            "done",
+            "if [ ! -s \"$pid_path\" ] && [ ! -s \"$status_path\" ]; then",
+            "  kill -TERM \"$starter_pid\" 2>/dev/null || true",
+            "  printf '%s\\n' 'failed to start async command'",
+            "  exit 126",
+            "fi",
+            "printf 'started_pid: %s\\n' \"$(cat \"$pid_path\" 2>/dev/null || printf done)\"",
+        )
+    )
+
+
+def _build_async_status_command(status_path: str) -> str:
+    quoted_status_path = shlex.quote(status_path)
+    return f"test -s {quoted_status_path} && cat {quoted_status_path} || true"
+
+
+def _build_async_cancel_command(status_path: str, pid_path: str) -> str:
+    quoted_status_path = shlex.quote(status_path)
+    quoted_pid_path = shlex.quote(pid_path)
+    return "\n".join(
+        (
+            f"pid=$(cat {quoted_pid_path} 2>/dev/null || true)",
+            f"rm -f {quoted_pid_path}",
+            "if [ -n \"$pid\" ]; then",
+            "kill -TERM -\"$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true",
+            "sleep 0.5",
+            "kill -KILL -\"$pid\" 2>/dev/null || kill -KILL \"$pid\" 2>/dev/null || true",
+            "fi",
+            f"test -s {quoted_status_path} || printf '%s\\n' 130 > {quoted_status_path}",
         )
     )
 
@@ -178,6 +249,8 @@ async def execute_async_command(ctx: RunContextWrapper[AgentRuntimeContext], com
 
     run_id = str(uuid4())
     output_path = _new_command_output_path()
+    status_path = _build_async_status_path(output_path)
+    pid_path = _build_async_pid_path(output_path)
     task_context = AgentRuntimeContext(
         session_id=ctx.context.session_id,
         user=ctx.context.user,
@@ -191,19 +264,43 @@ async def execute_async_command(ctx: RunContextWrapper[AgentRuntimeContext], com
         sandbox_skill_metadata=ctx.context.sandbox_skill_metadata,
     )
     command_text = command.strip()
+
+    try:
+        start_result = await execute_sandbox_container_command(
+            id=container_id,
+            command=_build_async_start_command(command_text, output_path, status_path, pid_path),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return ToolResultSchema(
+            status=ToolResultStatusSchema.ERROR,
+            type=ToolResultTypeSchema.COMMAND_EXECUTION,
+            output=str(exc) or "Async command failed to start.",
+        ).model_dump_json()
+    if start_result.exit_code != 0:
+        return ToolResultSchema(
+            status=ToolResultStatusSchema.ERROR,
+            type=ToolResultTypeSchema.COMMAND_EXECUTION,
+            output=start_result.output or "Async command failed to start.",
+            exit_code=start_result.exit_code,
+        ).model_dump_json()
+
     start_async_sandbox_command(
         run_id=run_id,
         context=task_context,
         command=command_text,
         output_path=output_path,
-        wrapped_command=_build_async_command(command_text, output_path),
+        status_command=_build_async_status_command(status_path),
         stat_command=_build_output_stat_command(output_path),
+        cancel_command=_build_async_cancel_command(status_path, pid_path),
     )
     output = "\n".join(
         (
             "Async command started.",
             f"run_id: {run_id}",
             f"output_file: {output_path}",
+            f"status_file: {status_path}",
             f"agent_instance_id: {ctx.context.agent_instance_id}",
             "status: running",
             f"read_chunks: sed -n '1,{_COMMAND_OUTPUT_CHUNK_LINE_COUNT}p' {output_path}",

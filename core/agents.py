@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agents import Agent, Tool
+from agents import Agent, ModelSettings, Tool
 from agents.extensions.models.litellm_model import LitellmModel
 
 from config import AgentConfig, WORKSPACE, get_config
@@ -159,6 +159,7 @@ class AgentRegistry:
         return Agent(
             name=cfg.name,
             model=LitellmModel(base_url=cfg.base_url, api_key=cfg.api_key, model=cfg.model),
+            model_settings=ModelSettings(parallel_tool_calls=False),
             instructions=instructions,
             tools=tools,
         )

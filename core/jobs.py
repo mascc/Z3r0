@@ -14,6 +14,9 @@ from service.sandbox_container_service import execute_sandbox_container_command
 logger = get_logger(__name__)
 
 
+_ASYNC_COMMAND_POLL_INTERVAL_SECONDS = 1.0
+
+
 @dataclass
 class _AsyncCommandJob:
     task: asyncio.Task[None]
@@ -32,8 +35,9 @@ def start_async_sandbox_command(
     context: AgentRuntimeContext,
     command: str,
     output_path: str,
-    wrapped_command: str,
+    status_command: str,
     stat_command: str,
+    cancel_command: str,
 ) -> None:
     task = asyncio.create_task(
         _run_async_sandbox_command(
@@ -41,8 +45,9 @@ def start_async_sandbox_command(
             context=context,
             command=command,
             output_path=output_path,
-            wrapped_command=wrapped_command,
+            status_command=status_command,
             stat_command=stat_command,
+            cancel_command=cancel_command,
         ),
         name=f"sandbox-async-command-{run_id}",
     )
@@ -133,20 +138,27 @@ async def _run_async_sandbox_command(
     context: AgentRuntimeContext,
     command: str,
     output_path: str,
-    wrapped_command: str,
+    status_command: str,
     stat_command: str,
+    cancel_command: str,
 ) -> None:
     if context.sandbox_container_id is None:
         return
 
     exit_code = 1
     try:
-        result = await execute_sandbox_container_command(
-            id=context.sandbox_container_id,
-            command=wrapped_command,
-        )
-        exit_code = result.exit_code
+        while True:
+            result = await execute_sandbox_container_command(
+                id=context.sandbox_container_id,
+                command=status_command,
+            )
+            completed_exit_code = _parse_status_exit_code(result.output)
+            if completed_exit_code is not None:
+                exit_code = completed_exit_code
+                break
+            await asyncio.sleep(_ASYNC_COMMAND_POLL_INTERVAL_SECONDS)
     except asyncio.CancelledError:
+        await _cancel_detached_command(context.sandbox_container_id, cancel_command)
         raise
     except Exception:
         logger.exception("async sandbox command execution failed: %s", run_id)
@@ -169,6 +181,26 @@ async def _run_async_sandbox_command(
         sandbox_container_generation=context.sandbox_container_generation,
         sandbox_skill_metadata=context.sandbox_skill_metadata,
     )
+
+
+def _parse_status_exit_code(output: str) -> int | None:
+    text = output.strip()
+    if not text:
+        return None
+    first = text.split()[0]
+    try:
+        return int(first)
+    except ValueError:
+        return None
+
+
+async def _cancel_detached_command(container_id: int | None, cancel_command: str) -> None:
+    if container_id is None:
+        return
+    try:
+        await execute_sandbox_container_command(id=container_id, command=cancel_command)
+    except Exception:
+        logger.debug("failed to cancel detached async sandbox command", exc_info=True)
 
 
 async def _stat_output_file(container_id: int, stat_command: str) -> tuple[int, int]:
