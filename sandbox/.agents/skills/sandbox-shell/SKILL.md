@@ -1,5 +1,5 @@
 ---
-name: sanbox-shell
+name: sandbox-shell
 description: Use when a task requires shell-level work inside the sandbox, including environment setup, script writing, code execution, running programs, downloading files, or package installation with the available sandbox tools.
 ---
 
