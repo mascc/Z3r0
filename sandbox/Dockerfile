@@ -128,6 +128,8 @@ RUN set -eux; \
       libxrandr2 \
       libc6-dev \
       make \
+      netcat-openbsd \
+      nmap \
       nodejs \
       novnc \
       openjdk-21-jdk \
@@ -164,6 +166,8 @@ RUN set -eux; \
     ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx; \
     java -version; \
     jadx --version; \
+    nmap --version; \
+    command -v nc; \
     test -x /opt/ghidra/ghidraRun; \
     test -x /opt/ghidra/support/analyzeHeadless; \
     test -x /opt/jadx/bin/jadx

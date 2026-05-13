@@ -79,9 +79,15 @@ Report only meaningful results: changed files, commands run, outputs that matter
 ## Available Tools
 
 - `7z`: inspect and extract archives, including `.zip` and `.7z`; use `7z x <archive> -o<dir>` when preserving paths matters.
+- `nc`: make TCP/UDP client connections, listen on ports, and perform basic socket diagnostics.
 - `python3`: run Python scripts, one-off Python commands, automation, parsing, data processing, and local program execution.
 - `pip3`: install and manage Python packages needed for the task.
 - `node`: run JavaScript programs, one-off Node.js commands, tooling scripts, and local program execution.
 - `npm`: install and manage Node.js packages and run package scripts needed for the task.
 - `curl`: fetch URLs, call HTTP APIs, download files, and inspect HTTP responses.
 - `wget`: download files and mirror or retrieve remote resources when appropriate.
+- `jadx`: decompile APK, DEX, AAR, and JAR inputs into Java source and decoded resources.
+- `nmap`: run authorized host discovery, port scanning, service/version detection, and network diagnostics.
+- `dev-browser`: control the already running browser; browser interaction commands must use `dev-browser --connect ...`.
+- `analyzeHeadless`: invoke Ghidra's headless analyzer directly for advanced binary analysis.
+- `/root/.agents/skills/ghidra/scripts/ghidra-analyze.sh`: run Ghidra headless analysis with bundled export scripts.
