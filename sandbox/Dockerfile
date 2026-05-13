@@ -138,6 +138,7 @@ RUN set -eux; \
       python3 \
       python3-pip \
       supervisor \
+      unzip \
       websockify \
       wget \
       x11vnc \
@@ -167,6 +168,7 @@ RUN set -eux; \
     java -version; \
     jadx --version; \
     nmap --version; \
+    unzip -v >/dev/null; \
     command -v nc; \
     test -x /opt/ghidra/ghidraRun; \
     test -x /opt/ghidra/support/analyzeHeadless; \
