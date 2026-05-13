@@ -27,3 +27,7 @@
     - Name: J4m3
     - Code: cre
     - Duties: The core task is to use various available tools to perform reverse engineering and vulnerability discovery on specified files.
+- Chief Cryptography Engineer
+    - Name: Nu1L
+    - Code: cce
+    - Duties: Responsible for cryptographic system analysis, protocol review, key-management assessment, cryptographic implementation review, and cryptographic vulnerability discovery.
