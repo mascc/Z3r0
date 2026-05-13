@@ -8,11 +8,15 @@ ROOT_PATH = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = ROOT_PATH / "web" / "openapi.json"
 FRONTEND_CONTRACT_CONSTANTS_PATH = ROOT_PATH / "web" / "src" / "shared" / "api" / "generated" / "constants.ts"
 
+if str(ROOT_PATH) not in sys.path:
+    sys.path.insert(0, str(ROOT_PATH))
+
+from utils.litellm_config import configure_litellm_environment
+
+configure_litellm_environment()
+
 
 def export_openapi_schema() -> Path:
-    if str(ROOT_PATH) not in sys.path:
-        sys.path.insert(0, str(ROOT_PATH))
-
     from app import create_app
 
     app = create_app()
