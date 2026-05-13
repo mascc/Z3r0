@@ -8,9 +8,10 @@ import { canOpenContainerNoVNC, queryAvailableSandboxContainers } from "../../sh
 import type { SandboxContainer } from "../../shared/api/types";
 import { useContainerShell } from "../container-shell/ContainerShellProvider";
 import { useAgentSessionContext } from "./AgentSessionProvider";
-import { ChatStream, SubagentSidePanel } from "./ChatStream";
+import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
 import { SandboxSelector } from "./SandboxSelector";
+import { SubagentSidePanel } from "./SubagentSidePanel";
 import { useSubagentPanel } from "./useSubagentPanel";
 
 type PlaygroundLocationState = { sessionId?: string };
@@ -205,7 +206,6 @@ export function PlaygroundPage() {
           </div>
           <SubagentSidePanel
             nodes={chatState.nodes}
-            streaming={chatState.streaming}
             tabs={subagentTabs}
             agents={agents}
             selection={selectedSubagent}

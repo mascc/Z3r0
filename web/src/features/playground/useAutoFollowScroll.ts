@@ -1,4 +1,4 @@
-import { RefObject, TouchEvent, WheelEvent, useCallback, useEffect, useRef, useState } from "react";
+import { RefObject, TouchEvent, WheelEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type UseAutoFollowScrollOptions<T extends HTMLElement> = {
   enabled?: boolean;
@@ -34,10 +34,20 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
     return containerRef?.current ?? findScrollContainer(tailRef.current);
   }, [containerRef]);
 
+  const scrollTail = useCallback((behavior: ScrollBehavior) => {
+    const container = getContainer();
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      if (behavior === "auto") lastScrollTopRef.current = container.scrollTop;
+      return;
+    }
+    tailRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, [getContainer]);
+
   const scrollToLatest = useCallback(() => {
     setFollowing(true);
-    tailRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [setFollowing]);
+    scrollTail("smooth");
+  }, [scrollTail, setFollowing]);
 
   useEffect(() => {
     if (resetKey == null) return;
@@ -72,10 +82,12 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
     };
   }, [enabled, getContainer, onScrollToLatestReady, resetKey, scrollToLatest, setFollowing, ...watch]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled || !following) return;
-    tailRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [enabled, following, ...watch]);
+    scrollTail("auto");
+    const frame = window.requestAnimationFrame(() => scrollTail("auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [enabled, following, scrollTail, ...watch]);
 
   const pauseFollowing = useCallback(() => {
     if (following) setFollowing(false);

@@ -24,15 +24,15 @@ export function useSubagentPanel(chatState: ChatState, scopeKey: string | null) 
       for (const runId of tab.runIds) {
         if (knownRuns.has(runId)) continue;
         knownRuns.add(runId);
-        newest = tab.selection;
+        newest = tab.agentCode;
       }
     }
 
     if (chatState.streaming && newest) {
       setSelectedSubagent(newest);
     }
-    if (selectedSubagent && !tabs.some((tab) => tab.agentCode === selectedSubagent.agentCode)) {
-      setSelectedSubagent(tabs[tabs.length - 1]?.selection ?? null);
+    if (selectedSubagent && !tabs.some((tab) => tab.agentCode === selectedSubagent)) {
+      setSelectedSubagent(tabs[tabs.length - 1]?.agentCode ?? null);
     }
   }, [chatState.streaming, selectedSubagent, tabs]);
 

@@ -1,13 +1,12 @@
-import type { ChatNode, NestedTranscript, SubagentExecutionItem } from "./playgroundReducer";
+import type { ChatNode, NestedTranscript, SubagentExecutionItem, TranscriptBlock } from "./playgroundReducer";
 
 export type SubagentTab = {
-  selection: SubagentSelection;
   agentCode: string;
   status: SubagentExecutionItem["status"];
   runIds: string[];
 };
 
-export type SubagentSelection = { kind: "agent"; agentCode: string };
+export type SubagentSelection = string;
 
 export type SubagentRunTarget = {
   task: SubagentExecutionItem;
@@ -16,68 +15,33 @@ export type SubagentRunTarget = {
 };
 
 export type SubagentTarget = {
-  kind: "agent";
-  agentCode: string;
   runs: SubagentRunTarget[];
-  live: boolean;
 };
 
 export function collectSubagentTabs(nodes: ChatNode[]): SubagentTab[] {
-  const byAgentCode = new Map<string, SubagentTab>();
-  const runIdsByAgentCode = new Map<string, Set<string>>();
-
-  for (const node of nodes) {
-    if (node.kind !== "agent") continue;
-    for (const item of node.executionItems) {
-      const task = item.kind === "subagent" ? item : item.subagentTask;
-      if (!task?.agentCode || !task.runId) continue;
-      let runIds = runIdsByAgentCode.get(task.agentCode);
-      if (!runIds) {
-        runIds = new Set();
-        runIdsByAgentCode.set(task.agentCode, runIds);
-      }
-      runIds.add(task.runId);
-
-      const current = byAgentCode.get(task.agentCode);
-      byAgentCode.set(task.agentCode, {
-        selection: { kind: "agent", agentCode: task.agentCode },
-        agentCode: task.agentCode,
-        status: mergeSubagentStatus(current?.status, task.status),
-        runIds: Array.from(runIds),
-      });
-    }
+  const tabs = new Map<string, { status: SubagentExecutionItem["status"]; runIds: Set<string> }>();
+  for (const { task } of subagentRuns(nodes)) {
+    const current = tabs.get(task.agentCode);
+    tabs.set(task.agentCode, {
+      status: mergeSubagentStatus(current?.status, task.status),
+      runIds: new Set([...(current?.runIds ?? []), task.runId]),
+    });
   }
-  return Array.from(byAgentCode.values());
+  return Array.from(tabs, ([agentCode, tab]) => ({
+    agentCode,
+    status: tab.status,
+    runIds: Array.from(tab.runIds),
+  }));
 }
 
-export function findSubagentTarget(nodes: ChatNode[], streaming: boolean, selection: SubagentSelection): SubagentTarget | null {
+export function findSubagentTarget(nodes: ChatNode[], selection: SubagentSelection): SubagentTarget | null {
   const runs = new Map<string, SubagentRunTarget>();
-  for (let i = nodes.length - 1; i >= 0; i -= 1) {
-    const node = nodes[i];
-    if (node.kind !== "agent") continue;
-    for (let j = node.executionItems.length - 1; j >= 0; j -= 1) {
-      const item = node.executionItems[j];
-      const task = item.kind === "subagent" ? item : item.subagentTask;
-      if (!task?.runId || task.agentCode !== selection.agentCode || runs.has(task.runId)) continue;
-      runs.set(task.runId, {
-        task,
-        transcript: item.kind === "tool" ? item.nested : undefined,
-        live: task.status === "running",
-      });
-    }
+  for (const { task, transcript } of subagentRuns(nodes, true)) {
+    if (task.agentCode !== selection || runs.has(task.runId)) continue;
+    runs.set(task.runId, { task, transcript, live: task.status === "running" });
   }
   const orderedRuns = Array.from(runs.values()).reverse();
-  if (!orderedRuns.length) return null;
-  return {
-    kind: "agent",
-    agentCode: selection.agentCode,
-    runs: orderedRuns,
-    live: orderedRuns.some((run) => run.live),
-  };
-}
-
-export function isSelectedSubagent(current: SubagentSelection | null | undefined, next: SubagentSelection) {
-  return Boolean(current && current.kind === next.kind && current.agentCode === next.agentCode);
+  return orderedRuns.length ? { runs: orderedRuns } : null;
 }
 
 export function subagentStatusColor(status: SubagentExecutionItem["status"]): "red" | "green" | "amber" {
@@ -104,4 +68,39 @@ function mergeSubagentStatus(
 ): SubagentExecutionItem["status"] {
   if (current === "running" || next === "running") return "running";
   return next;
+}
+
+function* subagentRuns(nodes: ChatNode[], reverse = false): Generator<SubagentRunTarget> {
+  const start = reverse ? nodes.length - 1 : 0;
+  const end = reverse ? -1 : nodes.length;
+  const step = reverse ? -1 : 1;
+
+  for (let i = start; i !== end; i += step) {
+    const node = nodes[i];
+    if (node.kind !== "agent") continue;
+    yield* subagentRunsFromBlocks(node.blocks, reverse);
+  }
+}
+
+function* subagentRunsFromBlocks(blocks: TranscriptBlock[], reverse: boolean): Generator<SubagentRunTarget> {
+  const start = reverse ? blocks.length - 1 : 0;
+  const end = reverse ? -1 : blocks.length;
+  const step = reverse ? -1 : 1;
+
+  for (let i = start; i !== end; i += step) {
+    const block = blocks[i];
+    const task = subagentTask(block);
+    if (!task?.agentCode || !task.runId) continue;
+    yield {
+      task,
+      transcript: block.kind === "tool" ? block.nested : undefined,
+      live: task.status === "running",
+    };
+  }
+}
+
+function subagentTask(block: TranscriptBlock): SubagentExecutionItem | undefined {
+  if (block.kind === "subagent") return block;
+  if (block.kind === "tool") return block.subagentTask;
+  return undefined;
 }

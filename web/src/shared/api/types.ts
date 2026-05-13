@@ -134,6 +134,7 @@ export type ListAgentEventsData = NonNullable<ListAgentEventsResponse["data"]>;
 export type DeleteAgentSessionResponse = JsonResponse<paths["/api/agent-sessions/{session_id}"]["delete"]>;
 
 export type UserMessageEvent = components["schemas"]["UserMessageEvent"];
+export type TurnBoundaryEvent = components["schemas"]["TurnBoundaryEvent"];
 export type TextDeltaEvent = components["schemas"]["TextDeltaEvent"];
 export type TextCompleteEvent = components["schemas"]["TextCompleteEvent"];
 export type ThinkingDeltaEvent = components["schemas"]["ThinkingDeltaEvent"];

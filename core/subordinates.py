@@ -14,7 +14,7 @@ from agents.stream_events import AgentUpdatedStreamEvent
 
 from config import get_config
 from core.context import AgentRuntimeContext, subagent_instance_id
-from core.events import event_from_sdk_stream
+from core.events import SdkStreamEventNormalizer
 from core.jobs import cancel_agent_async_sandbox_commands
 from core.session import Z3r0Session
 from database import get_engine
@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 @dataclass
 class _DeltaBuffer:
     is_thinking: bool
-    item_id: str
+    segment_id: str
     content: str = ""
     complete: bool = False
 
@@ -487,11 +487,12 @@ async def _run_subagent_turn(
         context=context,
         max_turns=max_turns,
     )
+    normalizer = SdkStreamEventNormalizer()
     try:
         async for sdk_event in stream.stream_events():
             if isinstance(sdk_event, AgentUpdatedStreamEvent):
                 continue
-            event = event_from_sdk_stream(sdk_event, child_agent.name)
+            event = normalizer.event_from_sdk_stream(sdk_event, child_agent.name)
             if event is None:
                 continue
             _track_delta(buffers, event)
@@ -594,16 +595,16 @@ def _subagent_context(
 
 def _track_delta(buffers: dict[str, _DeltaBuffer], event: AgentEventSchema) -> None:
     if isinstance(event, _DELTA_TYPES):
-        buf = buffers.get(event.item_id)
+        buf = buffers.get(event.segment_id)
         if buf is None:
-            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingDeltaEvent), item_id=event.item_id)
-            buffers[event.item_id] = buf
+            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingDeltaEvent), segment_id=event.segment_id)
+            buffers[event.segment_id] = buf
         buf.content += event.delta
     elif isinstance(event, _COMPLETE_TYPES):
-        buf = buffers.get(event.item_id)
+        buf = buffers.get(event.segment_id)
         if buf is None:
-            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingCompleteEvent), item_id=event.item_id)
-            buffers[event.item_id] = buf
+            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingCompleteEvent), segment_id=event.segment_id)
+            buffers[event.segment_id] = buf
         buf.content = event.text
         buf.complete = True
 
@@ -631,7 +632,7 @@ async def _flush_partial_context(
 
 def _partial_assistant_item(buf: _DeltaBuffer) -> TResponseInputItem:
     return {
-        "id": f"partial_{buf.item_id}",
+        "id": f"partial_{buf.segment_id}",
         "type": "message",
         "role": "assistant",
         "content": [{"type": "output_text", "text": buf.content, "annotations": []}],
@@ -641,7 +642,7 @@ def _partial_assistant_item(buf: _DeltaBuffer) -> TResponseInputItem:
 
 def _partial_reasoning_item(buf: _DeltaBuffer) -> TResponseInputItem:
     return {
-        "id": f"partial_{buf.item_id}",
+        "id": f"partial_{buf.segment_id}",
         "type": "reasoning",
         "summary": [{"type": "summary_text", "text": buf.content}],
         "status": "completed" if buf.complete else "incomplete",

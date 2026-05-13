@@ -1289,6 +1289,7 @@
                   "thinking_delta": "#/components/schemas/ThinkingDeltaEvent",
                   "tool_call": "#/components/schemas/ToolCallEvent",
                   "tool_result": "#/components/schemas/ToolResultEvent",
+                  "turn_boundary": "#/components/schemas/TurnBoundaryEvent",
                   "user_message": "#/components/schemas/UserMessageEvent"
                 },
                 "propertyName": "type"
@@ -1296,6 +1297,9 @@
               "oneOf": [
                 {
                   "$ref": "#/components/schemas/UserMessageEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/TurnBoundaryEvent"
                 },
                 {
                   "$ref": "#/components/schemas/TextDeltaEvent"
@@ -1869,10 +1873,6 @@
             "title": "Created At",
             "type": "string"
           },
-          "item_id": {
-            "title": "Item Id",
-            "type": "string"
-          },
           "nested_call_id": {
             "default": "",
             "title": "Nested Call Id",
@@ -1881,6 +1881,10 @@
           "nested_for": {
             "default": "",
             "title": "Nested For",
+            "type": "string"
+          },
+          "segment_id": {
+            "title": "Segment Id",
             "type": "string"
           },
           "text": {
@@ -1896,7 +1900,7 @@
         },
         "required": [
           "created_at",
-          "item_id",
+          "segment_id",
           "text"
         ],
         "title": "TextCompleteEvent",
@@ -1918,10 +1922,6 @@
             "title": "Delta",
             "type": "string"
           },
-          "item_id": {
-            "title": "Item Id",
-            "type": "string"
-          },
           "nested_call_id": {
             "default": "",
             "title": "Nested Call Id",
@@ -1930,6 +1930,10 @@
           "nested_for": {
             "default": "",
             "title": "Nested For",
+            "type": "string"
+          },
+          "segment_id": {
+            "title": "Segment Id",
             "type": "string"
           },
           "type": {
@@ -1941,7 +1945,7 @@
         },
         "required": [
           "created_at",
-          "item_id",
+          "segment_id",
           "delta"
         ],
         "title": "TextDeltaEvent",
@@ -1959,10 +1963,6 @@
             "title": "Created At",
             "type": "string"
           },
-          "item_id": {
-            "title": "Item Id",
-            "type": "string"
-          },
           "nested_call_id": {
             "default": "",
             "title": "Nested Call Id",
@@ -1971,6 +1971,10 @@
           "nested_for": {
             "default": "",
             "title": "Nested For",
+            "type": "string"
+          },
+          "segment_id": {
+            "title": "Segment Id",
             "type": "string"
           },
           "text": {
@@ -1986,7 +1990,7 @@
         },
         "required": [
           "created_at",
-          "item_id",
+          "segment_id",
           "text"
         ],
         "title": "ThinkingCompleteEvent",
@@ -2008,10 +2012,6 @@
             "title": "Delta",
             "type": "string"
           },
-          "item_id": {
-            "title": "Item Id",
-            "type": "string"
-          },
           "nested_call_id": {
             "default": "",
             "title": "Nested Call Id",
@@ -2020,6 +2020,10 @@
           "nested_for": {
             "default": "",
             "title": "Nested For",
+            "type": "string"
+          },
+          "segment_id": {
+            "title": "Segment Id",
             "type": "string"
           },
           "type": {
@@ -2031,7 +2035,7 @@
         },
         "required": [
           "created_at",
-          "item_id",
+          "segment_id",
           "delta"
         ],
         "title": "ThinkingDeltaEvent",
@@ -2135,6 +2139,41 @@
           "call_id"
         ],
         "title": "ToolResultEvent",
+        "type": "object"
+      },
+      "TurnBoundaryEvent": {
+        "properties": {
+          "agent_name": {
+            "default": "",
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "nested_call_id": {
+            "default": "",
+            "title": "Nested Call Id",
+            "type": "string"
+          },
+          "nested_for": {
+            "default": "",
+            "title": "Nested For",
+            "type": "string"
+          },
+          "type": {
+            "const": "turn_boundary",
+            "default": "turn_boundary",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at"
+        ],
+        "title": "TurnBoundaryEvent",
         "type": "object"
       },
       "UpdateSystemUserRequest": {

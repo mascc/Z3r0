@@ -1179,7 +1179,7 @@ export interface components {
         /** ListAgentEventsResponse */
         ListAgentEventsResponse: {
             /** Items */
-            items: (components["schemas"]["UserMessageEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["SubagentTaskEvent"] | components["schemas"]["ErrorEvent"])[];
+            items: (components["schemas"]["UserMessageEvent"] | components["schemas"]["TurnBoundaryEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["SubagentTaskEvent"] | components["schemas"]["ErrorEvent"])[];
             /** Session Id */
             session_id: string;
         };
@@ -1436,8 +1436,6 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Item Id */
-            item_id: string;
             /**
              * Nested Call Id
              * @default
@@ -1448,6 +1446,8 @@ export interface components {
              * @default
              */
             nested_for: string;
+            /** Segment Id */
+            segment_id: string;
             /** Text */
             text: string;
             /**
@@ -1470,8 +1470,6 @@ export interface components {
             created_at: string;
             /** Delta */
             delta: string;
-            /** Item Id */
-            item_id: string;
             /**
              * Nested Call Id
              * @default
@@ -1482,6 +1480,8 @@ export interface components {
              * @default
              */
             nested_for: string;
+            /** Segment Id */
+            segment_id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1500,8 +1500,6 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Item Id */
-            item_id: string;
             /**
              * Nested Call Id
              * @default
@@ -1512,6 +1510,8 @@ export interface components {
              * @default
              */
             nested_for: string;
+            /** Segment Id */
+            segment_id: string;
             /** Text */
             text: string;
             /**
@@ -1534,8 +1534,6 @@ export interface components {
             created_at: string;
             /** Delta */
             delta: string;
-            /** Item Id */
-            item_id: string;
             /**
              * Nested Call Id
              * @default
@@ -1546,6 +1544,8 @@ export interface components {
              * @default
              */
             nested_for: string;
+            /** Segment Id */
+            segment_id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1627,6 +1627,34 @@ export interface components {
              * @enum {string}
              */
             type: "tool_result";
+        };
+        /** TurnBoundaryEvent */
+        TurnBoundaryEvent: {
+            /**
+             * Agent Name
+             * @default
+             */
+            agent_name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Nested Call Id
+             * @default
+             */
+            nested_call_id: string;
+            /**
+             * Nested For
+             * @default
+             */
+            nested_for: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn_boundary";
         };
         /** UpdateSystemUserRequest */
         UpdateSystemUserRequest: {

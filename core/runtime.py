@@ -18,7 +18,7 @@ from openai.types.responses import (
 from config import get_config
 from core.agents import AgentRegistry, AgentToolSnapshot, SessionAgentGraph
 from core.context import AgentRuntimeContext, main_agent_instance_id
-from core.events import event_from_sdk_stream
+from core.events import SdkStreamEventNormalizer
 from core.session import Z3r0Session
 from core.subordinates import cancel_sandbox_subagent_runs, cancel_session_subagent_runs
 from core.jobs import cancel_sandbox_async_commands, cancel_session_async_sandbox_commands
@@ -45,7 +45,7 @@ logger = get_logger(__name__)
 @dataclass
 class _DeltaBuffer:
     is_thinking: bool
-    item_id: str
+    segment_id: str
     content: str = ""
     complete: bool = False
 
@@ -204,6 +204,7 @@ class AgentSession:
 
         async def _consume_main() -> None:
             try:
+                normalizer = SdkStreamEventNormalizer()
                 max_turns = get_config().agent_runtime.main_max_turns
                 user_input = _build_user_input(text)
                 agent_config = get_config().agents.get(agent_code)
@@ -223,7 +224,7 @@ class AgentSession:
                 async for sdk_event in stream.stream_events():
                     if isinstance(sdk_event, AgentUpdatedStreamEvent):
                         continue
-                    event = event_from_sdk_stream(sdk_event, agent.name)
+                    event = normalizer.event_from_sdk_stream(sdk_event, agent.name)
                     if event is not None:
                         queue.put_nowait(event)
             except asyncio.CancelledError:
@@ -236,26 +237,36 @@ class AgentSession:
 
         main_task = asyncio.create_task(_consume_main(), name="agent-main-stream")
 
+        flush_partial = False
+        stream_finished = False
         try:
             while True:
                 event = await queue.get()
                 if event is None:
+                    stream_finished = True
                     break
                 _track_delta(buffers, event)
                 yield event
+            if not main_task.done():
+                try:
+                    await main_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             yield DoneEvent(created_at=datetime.now(), agent_name=agent.name)
         except asyncio.CancelledError:
+            flush_partial = True
             if not main_task.done():
                 main_task.cancel()
             raise
         finally:
-            if not main_task.done():
+            if not stream_finished and not main_task.done():
                 main_task.cancel()
                 try:
                     await main_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            await _flush_partial_context(result_holder["result"], memory_session, buffers)
+            if flush_partial:
+                await _flush_partial_context(result_holder["result"], memory_session, buffers)
 
     def _ensure_agent_graph(self, agent_code: str, context: AgentRuntimeContext) -> SessionAgentGraph:
         tool_snapshot = AgentToolSnapshot.from_context(context)
@@ -473,16 +484,16 @@ def _tag_notification_event(event: AgentEventSchema, context: AgentRuntimeContex
 
 def _track_delta(buffers: dict[str, _DeltaBuffer], event: AgentEventSchema) -> None:
     if isinstance(event, _DELTA_TYPES):
-        buf = buffers.get(event.item_id)
+        buf = buffers.get(event.segment_id)
         if buf is None:
-            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingDeltaEvent), item_id=event.item_id)
-            buffers[event.item_id] = buf
+            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingDeltaEvent), segment_id=event.segment_id)
+            buffers[event.segment_id] = buf
         buf.content += event.delta
     elif isinstance(event, _COMPLETE_TYPES):
-        buf = buffers.get(event.item_id)
+        buf = buffers.get(event.segment_id)
         if buf is None:
-            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingCompleteEvent), item_id=event.item_id)
-            buffers[event.item_id] = buf
+            buf = _DeltaBuffer(is_thinking=isinstance(event, ThinkingCompleteEvent), segment_id=event.segment_id)
+            buffers[event.segment_id] = buf
         buf.content = event.text
         buf.complete = True
 
@@ -511,7 +522,7 @@ async def _flush_partial_context(
 
 def _partial_assistant_item(buf: _DeltaBuffer) -> TResponseInputItem:
     return {
-        "id": f"partial_{buf.item_id}",
+        "id": f"partial_{buf.segment_id}",
         "type": "message",
         "role": "assistant",
         "content": [{"type": "output_text", "text": buf.content, "annotations": []}],
@@ -521,7 +532,7 @@ def _partial_assistant_item(buf: _DeltaBuffer) -> TResponseInputItem:
 
 def _partial_reasoning_item(buf: _DeltaBuffer) -> TResponseInputItem:
     return {
-        "id": f"partial_{buf.item_id}",
+        "id": f"partial_{buf.segment_id}",
         "type": "reasoning",
         "summary": [{"type": "summary_text", "text": buf.content}],
         "status": "completed" if buf.complete else "incomplete",

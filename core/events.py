@@ -1,12 +1,17 @@
 """Normalize SDK stream events and stored items into our wire schema."""
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from agents.items import ToolCallItem, ToolCallOutputItem
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+from openai.types.responses.response_completed_event import ResponseCompletedEvent
+from openai.types.responses.response_created_event import ResponseCreatedEvent
 from openai.types.responses.response_error_event import ResponseErrorEvent
+from openai.types.responses.response_failed_event import ResponseFailedEvent
+from openai.types.responses.response_incomplete_event import ResponseIncompleteEvent
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
 )
@@ -29,6 +34,7 @@ from schema.agent_event_schema import (
     ToolCallEvent,
     ToolResultEvent,
     SubagentTaskEvent,
+    TurnBoundaryEvent,
     UserMessageEvent,
 )
 from schema.agent_subordinate_schema import AgentSubordinateStatus
@@ -37,21 +43,88 @@ from schema.agent_subordinate_schema import AgentSubordinateStatus
 # `incomplete` is a partial output, not an error
 _TOOL_ERROR_STATUSES = {"failed", "error"}
 
-# disambiguate reasoning body text vs per-summary segments at the same item_id
-_THINKING_TEXT_SUFFIX = "#text"
-_THINKING_SUMMARY_SUFFIX = "#summary"
-
 _TEXT_CONTENT_TYPES = {"input_text", "output_text", "text"}
-_PLACEHOLDER_ITEM_IDS = {"", "__fake_id__"}
+_RUN_ITEM_RESPONSE_BOUNDARIES = {
+    "message_output_created",
+    "reasoning_item_created",
+    "tool_called",
+    "tool_output",
+    "tool_search_called",
+    "tool_search_output_created",
+    "handoff_requested",
+    "handoff_occured",
+    "mcp_approval_requested",
+    "mcp_approval_response",
+    "mcp_list_tools",
+}
 
 
-def event_from_sdk_stream(sdk_event: Any, current_agent: str) -> AgentEventSchema | None:
-    created_at = datetime.now()
-    if isinstance(sdk_event, RawResponsesStreamEvent):
-        return _from_raw_response(sdk_event.data, current_agent, created_at)
-    if isinstance(sdk_event, RunItemStreamEvent):
-        return _from_run_item(sdk_event, current_agent, created_at)
-    return None
+@dataclass(frozen=True, slots=True)
+class _StreamSegmentKey:
+    kind: str
+    response_index: int = 0
+    output_index: int = -1
+    content_index: int = -1
+    summary_index: int = -1
+
+
+@dataclass(slots=True)
+class _StreamSegment:
+    segment_id: str
+    complete: bool = False
+
+
+class SdkStreamEventNormalizer:
+    """Map SDK stream events to the public app-level event contract."""
+
+    def __init__(self) -> None:
+        self._segments: dict[_StreamSegmentKey, _StreamSegment] = {}
+        self._next_segment_index = 1
+        self._response_index = 0
+        self._response_open = False
+
+    def event_from_sdk_stream(self, sdk_event: Any, current_agent: str) -> AgentEventSchema | None:
+        created_at = datetime.now()
+        if isinstance(sdk_event, RawResponsesStreamEvent):
+            if self._handle_response_lifecycle(sdk_event.data):
+                return None
+            return _from_raw_response(sdk_event.data, current_agent, created_at, self)
+        if isinstance(sdk_event, RunItemStreamEvent):
+            event = _from_run_item(sdk_event, current_agent, created_at)
+            if sdk_event.name in _RUN_ITEM_RESPONSE_BOUNDARIES:
+                self._response_open = False
+            return event
+        return None
+
+    @property
+    def response_index(self) -> int:
+        if not self._response_open:
+            return self._begin_response()
+        return self._response_index
+
+    def segment_id(self, key: _StreamSegmentKey, *, complete: bool) -> str:
+        segment = self._segments.get(key)
+        if segment is None or (segment.complete and not complete):
+            segment = _StreamSegment(segment_id=f"{key.kind}_{self._next_segment_index}")
+            self._segments[key] = segment
+            self._next_segment_index += 1
+        if complete:
+            segment.complete = True
+        return segment.segment_id
+
+    def _handle_response_lifecycle(self, data: Any) -> bool:
+        if isinstance(data, ResponseCreatedEvent):
+            self._begin_response()
+            return True
+        if isinstance(data, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
+            self._response_open = False
+            return True
+        return False
+
+    def _begin_response(self) -> int:
+        self._response_index += 1
+        self._response_open = True
+        return self._response_index
 
 
 def events_from_sdk_message(
@@ -67,16 +140,19 @@ def events_from_sdk_message(
     if not isinstance(message, dict):
         return []
 
-    item_id = _stored_item_id(message, fallback_id)
     scope = _scope(agent_name, nested_for, nested_call_id)
+    segment_base = f"stored_{fallback_id}"
     match message.get("type"):
         case "message":
-            return _events_from_stored_message(message, item_id, created_at, scope, owner_code)
+            return _events_from_stored_message(
+                message,
+                segment_base,
+                created_at,
+                scope,
+                owner_code,
+            )
         case "reasoning":
-            text = _stored_reasoning_text(message)
-            if not text:
-                return []
-            return [ThinkingCompleteEvent(created_at=created_at, item_id=item_id + _THINKING_TEXT_SUFFIX, text=text, **scope)]
+            return _events_from_stored_reasoning(message, segment_base, created_at, scope)
         case "function_call":
             return [ToolCallEvent(
                 created_at=created_at,
@@ -134,37 +210,52 @@ def _scope(agent_name: str, nested_for: str, nested_call_id: str) -> dict[str, s
     }
 
 
-def _from_raw_response(data: Any, current_agent: str, created_at: datetime) -> AgentEventSchema | None:
+def _from_raw_response(
+    data: Any,
+    current_agent: str,
+    created_at: datetime,
+    normalizer: SdkStreamEventNormalizer,
+) -> AgentEventSchema | None:
     if isinstance(data, ResponseTextDeltaEvent):
-        return TextDeltaEvent(created_at=created_at, agent_name=current_agent, item_id=data.item_id, delta=data.delta)
+        return TextDeltaEvent(
+            created_at=created_at,
+            agent_name=current_agent,
+            segment_id=normalizer.segment_id(_text_segment_key(data, normalizer.response_index), complete=False),
+            delta=data.delta,
+        )
     if isinstance(data, ResponseTextDoneEvent):
-        return TextCompleteEvent(created_at=created_at, agent_name=current_agent, item_id=data.item_id, text=data.text)
+        return TextCompleteEvent(
+            created_at=created_at,
+            agent_name=current_agent,
+            segment_id=normalizer.segment_id(_text_segment_key(data, normalizer.response_index), complete=True),
+            text=data.text,
+        )
     if isinstance(data, ResponseReasoningTextDeltaEvent):
         return ThinkingDeltaEvent(
             created_at=created_at,
             agent_name=current_agent,
-            item_id=data.item_id + _THINKING_TEXT_SUFFIX,
+            segment_id=normalizer.segment_id(_thinking_text_segment_key(data, normalizer.response_index), complete=False),
             delta=data.delta,
         )
     if isinstance(data, ResponseReasoningTextDoneEvent):
         return ThinkingCompleteEvent(
             created_at=created_at,
             agent_name=current_agent,
-            item_id=data.item_id + _THINKING_TEXT_SUFFIX,
+            segment_id=normalizer.segment_id(_thinking_text_segment_key(data, normalizer.response_index), complete=True),
             text=data.text,
         )
     if isinstance(data, ResponseReasoningSummaryTextDeltaEvent):
         return ThinkingDeltaEvent(
             created_at=created_at,
             agent_name=current_agent,
-            item_id=f"{data.item_id}{_THINKING_SUMMARY_SUFFIX}{getattr(data, 'summary_index', 0)}",
+            segment_id=normalizer.segment_id(_thinking_summary_segment_key(data, normalizer.response_index), complete=False),
             delta=data.delta,
         )
     if isinstance(data, ResponseReasoningSummaryTextDoneEvent):
         return ThinkingCompleteEvent(
             created_at=created_at,
             agent_name=current_agent,
-            item_id=f"{data.item_id}{_THINKING_SUMMARY_SUFFIX}{getattr(data, 'summary_index', 0)}",
+            segment_id=normalizer.segment_id(_thinking_summary_segment_key(data, normalizer.response_index), complete=True),
             text=data.text,
         )
     if isinstance(data, ResponseErrorEvent):
@@ -198,28 +289,56 @@ def _from_run_item(event: RunItemStreamEvent, current_agent: str, created_at: da
 
 
 def _events_from_stored_message(
-    message: dict[str, Any], item_id: str, created_at: datetime, scope: dict[str, str], owner_code: str,
+    message: dict[str, Any], segment_base: str, created_at: datetime, scope: dict[str, str], owner_code: str,
 ) -> list[AgentEventSchema]:
-    text = _stored_message_text(message.get("content"))
+    parts = _stored_message_text_parts(message.get("content"))
+    text = "".join(parts)
     if not text:
         return []
     role = message.get("role")
-    if role == "user" and text.lstrip().startswith("# Internal "):
-        return []
-    if role == "user" and scope.get("nested_for"):
-        return []
     if role == "user":
+        if _is_hidden_user_message(text, scope):
+            return [TurnBoundaryEvent(created_at=created_at, **scope)]
         return [UserMessageEvent(created_at=created_at, text=text, target_agent_code=owner_code)]
     if role == "assistant":
-        return [TextCompleteEvent(created_at=created_at, item_id=item_id, text=text, **scope)]
+        return [
+            TextCompleteEvent(
+                created_at=created_at,
+                segment_id=_stored_segment_id(segment_base, "text", index),
+                text=part,
+                **scope,
+            )
+            for index, part in enumerate(parts)
+        ]
     return []
 
 
-def _stored_message_text(content: Any) -> str:
+def _is_hidden_user_message(text: str, scope: dict[str, str]) -> bool:
+    return text.lstrip().startswith("# Internal ") or bool(scope.get("nested_for"))
+
+
+def _events_from_stored_reasoning(
+    message: dict[str, Any],
+    segment_base: str,
+    created_at: datetime,
+    scope: dict[str, str],
+) -> list[AgentEventSchema]:
+    return [
+        ThinkingCompleteEvent(
+            created_at=created_at,
+            segment_id=_stored_segment_id(segment_base, f"thinking_{kind}", index),
+            text=text,
+            **scope,
+        )
+        for kind, index, text in _stored_reasoning_parts(message)
+    ]
+
+
+def _stored_message_text_parts(content: Any) -> list[str]:
     if isinstance(content, str):
-        return content
+        return [content] if content else []
     if not isinstance(content, list):
-        return ""
+        return []
     parts: list[str] = []
     for item in content:
         if not isinstance(item, dict):
@@ -227,28 +346,72 @@ def _stored_message_text(content: Any) -> str:
         text = item.get("text")
         if isinstance(text, str) and item.get("type") in _TEXT_CONTENT_TYPES:
             parts.append(text)
-    return "".join(parts)
+    return [part for part in parts if part]
 
 
-def _stored_reasoning_text(message: dict[str, Any]) -> str:
-    summary = message.get("summary")
-    if isinstance(summary, str):
-        return summary
-    if not isinstance(summary, list):
-        return ""
-    parts: list[str] = []
-    for item in summary:
-        if isinstance(item, dict) and isinstance(item.get("text"), str):
-            parts.append(item["text"])
-    return "".join(parts)
+def _stored_reasoning_parts(message: dict[str, Any]) -> list[tuple[str, int, str]]:
+    parts: list[tuple[str, int, str]] = []
+    parts.extend(_stored_text_entries(message.get("content"), "content"))
+    parts.extend(_stored_text_entries(message.get("summary"), "summary"))
+    return parts
 
 
-def _stored_item_id(message: dict[str, Any], fallback_id: str) -> str:
-    item_id = str(message.get("id") or "")
-    if item_id and item_id not in _PLACEHOLDER_ITEM_IDS:
-        return item_id
-    call_id = str(message.get("call_id") or "")
-    return call_id or fallback_id
+def _stored_text_entries(value: Any, kind: str) -> list[tuple[str, int, str]]:
+    if isinstance(value, str):
+        return [(kind, 0, value)] if value else []
+    if not isinstance(value, list):
+        return []
+    entries: list[tuple[str, int, str]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text:
+            entries.append((kind, index, text))
+    return entries
+
+
+def _stored_segment_id(segment_base: str, kind: str, index: int) -> str:
+    return f"{segment_base}_{kind}_{index}"
+
+
+def _text_segment_key(data: Any, response_index: int) -> _StreamSegmentKey:
+    return _segment_key("text", data, response_index=response_index, content_index=_int_attr(data, "content_index"))
+
+
+def _thinking_text_segment_key(data: Any, response_index: int) -> _StreamSegmentKey:
+    return _segment_key("thinking", data, response_index=response_index, content_index=_int_attr(data, "content_index"))
+
+
+def _thinking_summary_segment_key(data: Any, response_index: int) -> _StreamSegmentKey:
+    return _segment_key("thinking", data, response_index=response_index, summary_index=_int_attr(data, "summary_index"))
+
+
+def _segment_key(
+    kind: str,
+    data: Any,
+    *,
+    response_index: int = 0,
+    content_index: int = -1,
+    summary_index: int = -1,
+) -> _StreamSegmentKey:
+    return _StreamSegmentKey(
+        kind=kind,
+        response_index=response_index,
+        output_index=_int_attr(data, "output_index"),
+        content_index=content_index,
+        summary_index=summary_index,
+    )
+
+
+def _int_attr(data: Any, key: str) -> int:
+    value = getattr(data, key, -1)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
 
 
 def _parse_tool_arguments(raw: Any) -> dict[str, Any]:

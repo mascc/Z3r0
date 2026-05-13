@@ -9,6 +9,7 @@ from schema.agent_subordinate_schema import AgentSubordinateStatus
 
 class AgentEventTypeSchema(StrEnum):
     USER_MESSAGE = "user_message"
+    TURN_BOUNDARY = "turn_boundary"
     THINKING_DELTA = "thinking_delta"
     THINKING_COMPLETE = "thinking_complete"
     TEXT_DELTA = "text_delta"
@@ -45,27 +46,31 @@ class UserMessageEvent(BaseModel):
     target_agent_code: str = ""
 
 
+class TurnBoundaryEvent(_AgentScopedEvent):
+    type: Literal[AgentEventTypeSchema.TURN_BOUNDARY] = AgentEventTypeSchema.TURN_BOUNDARY
+
+
 class TextDeltaEvent(_AgentScopedEvent):
     type: Literal[AgentEventTypeSchema.TEXT_DELTA] = AgentEventTypeSchema.TEXT_DELTA
-    item_id: str
+    segment_id: str
     delta: str
 
 
 class TextCompleteEvent(_AgentScopedEvent):
     type: Literal[AgentEventTypeSchema.TEXT_COMPLETE] = AgentEventTypeSchema.TEXT_COMPLETE
-    item_id: str
+    segment_id: str
     text: str
 
 
 class ThinkingDeltaEvent(_AgentScopedEvent):
     type: Literal[AgentEventTypeSchema.THINKING_DELTA] = AgentEventTypeSchema.THINKING_DELTA
-    item_id: str
+    segment_id: str
     delta: str
 
 
 class ThinkingCompleteEvent(_AgentScopedEvent):
     type: Literal[AgentEventTypeSchema.THINKING_COMPLETE] = AgentEventTypeSchema.THINKING_COMPLETE
-    item_id: str
+    segment_id: str
     text: str
 
 
@@ -108,6 +113,7 @@ class ErrorEvent(_AgentScopedEvent):
 # everything that shows up in stored history (DoneEvent is a stream control signal only)
 AgentContentEventSchema = Annotated[
     UserMessageEvent
+    | TurnBoundaryEvent
     | TextDeltaEvent
     | TextCompleteEvent
     | ThinkingDeltaEvent
@@ -121,6 +127,7 @@ AgentContentEventSchema = Annotated[
 
 AgentEventSchema = Annotated[
     UserMessageEvent
+    | TurnBoundaryEvent
     | TextDeltaEvent
     | TextCompleteEvent
     | ThinkingDeltaEvent
