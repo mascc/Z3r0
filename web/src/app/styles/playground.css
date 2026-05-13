@@ -627,7 +627,7 @@
   animation: agentPulse 1.4s ease-in-out infinite;
 }
 
-.agent-body {
+.transcript-body {
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -1127,13 +1127,6 @@
   border-radius: 999px;
   color: #66758b;
   font-size: 11px;
-}
-
-.transcript-view {
-  display: grid;
-  gap: 10px;
-  min-height: 0;
-  padding-bottom: 18px;
 }
 
 .transcript-empty {

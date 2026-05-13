@@ -2,7 +2,7 @@ import { Button } from "@douyinfe/semi-ui";
 import { ArrowDown, GitBranch, X } from "lucide-react";
 import { useMemo, useRef } from "react";
 import type { AgentInfo } from "../../shared/api/types";
-import type { AgentTranscript, ChatNode, SubagentExecutionItem } from "./playgroundReducer";
+import type { ChatNode, SubagentExecutionItem } from "./playgroundReducer";
 import {
   findSubagentTarget,
   type SubagentSelection,
@@ -112,7 +112,12 @@ function SubagentRunView({ run }: { run: SubagentTarget["runs"][number] }) {
     return (
       <div className="subagent-task-view">
         <SubagentTaskMeta item={run.task} />
-        <SubagentTranscript transcript={run.transcript} live={run.live} />
+        <TranscriptContent
+          transcript={run.transcript}
+          live={run.live}
+          emptyText="No subagent output yet."
+          allowSubagentOpen={false}
+        />
       </div>
     );
   }
@@ -128,18 +133,6 @@ function SubagentRunView({ run }: { run: SubagentTarget["runs"][number] }) {
       <SubagentTaskMeta item={run.task} />
       <ExecutionSection label={label} body={body} tone={failed ? "error" : undefined} />
     </div>
-  );
-}
-
-function SubagentTranscript({ transcript, live }: { transcript: AgentTranscript; live: boolean }) {
-  return (
-      <TranscriptContent
-        transcript={transcript}
-        live={live}
-      className="transcript-view"
-        emptyText="No subagent output yet."
-        allowSubagentOpen={false}
-      />
   );
 }
 

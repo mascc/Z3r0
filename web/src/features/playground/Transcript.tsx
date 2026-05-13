@@ -37,7 +37,6 @@ type ContentBlock = TextItem | ErrorItem;
 export function TranscriptContent({
   transcript,
   live,
-  className,
   emptyText,
   pendingEmpty = false,
   allowSubagentOpen = true,
@@ -46,7 +45,6 @@ export function TranscriptContent({
 }: {
   transcript: AgentTranscript;
   live: boolean;
-  className: string;
   emptyText?: string;
   pendingEmpty?: boolean;
   allowSubagentOpen?: boolean;
@@ -62,7 +60,7 @@ export function TranscriptContent({
   const contentBlocks = transcript.blocks.filter(isContentBlock);
 
   return (
-    <div className={className}>
+    <div className="transcript-body">
       {pendingEmpty && isEmpty && live ? <PendingShimmer /> : null}
       {thinkingBlocks.length ? (
         <ThinkingGroup

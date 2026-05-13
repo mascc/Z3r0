@@ -135,7 +135,6 @@ function AgentBlock({
         <TranscriptContent
           transcript={transcript}
           live={live}
-          className="agent-body"
           pendingEmpty
           selectedSubagent={selectedSubagent}
           onOpenSubagent={onOpenSubagent}
