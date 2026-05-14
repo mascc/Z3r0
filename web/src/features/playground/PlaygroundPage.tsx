@@ -1,6 +1,6 @@
-import { Button, Spin, Tooltip } from "@douyinfe/semi-ui";
-import { Activity, ArrowDown, FolderOpen, Monitor, Plus, SquareTerminal } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Button, Tooltip } from "@douyinfe/semi-ui";
+import { Activity, FolderOpen, Monitor, Plus, SquareTerminal } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
 import { showApiError } from "../../shared/api/feedback";
@@ -10,9 +10,9 @@ import { useContainerShell } from "../container-shell/ContainerShellProvider";
 import { useAgentSessionContext } from "./AgentSessionProvider";
 import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
+import { MessageScrollPanel } from "./MessageScrollPanel";
 import { SandboxSelector } from "./SandboxSelector";
 import { SubagentSidePanel } from "./SubagentSidePanel";
-import { useAutoFollowScroll } from "./useAutoFollowScroll";
 import { useSubagentPanel } from "./useSubagentPanel";
 
 type PlaygroundLocationState = { sessionId?: string };
@@ -45,18 +45,6 @@ export function PlaygroundPage() {
   const [sandboxContainers, setSandboxContainers] = useState<SandboxContainer[]>([]);
   const [sandboxLoading, setSandboxLoading] = useState(false);
   const [sandboxContainerId, setSandboxContainerId] = useState<number | null>(null);
-  const [followLatest, setFollowLatest] = useState(true);
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-  const scrollToLatestRef = useRef<(() => void) | null>(null);
-  const { tailRef, scrollHandlers } = useAutoFollowScroll({
-    containerRef: canvasRef,
-    followLatest,
-    onFollowLatestChange: setFollowLatest,
-    onScrollToLatestReady: (handler) => {
-      scrollToLatestRef.current = handler;
-    },
-    watch: [chatState.nodes, chatState.streaming],
-  });
   const { openFileManager, openNoVNC, openShell } = useContainerShell();
   const { selectedSubagent, setSelectedSubagent, subagentTabs, closeSubagentPanel } = useSubagentPanel(chatState, activeSessionId);
   const hasRunningSubagents = subagentTabs.some((tab) => tab.status === "running");
@@ -168,9 +156,17 @@ export function PlaygroundPage() {
       <div className="playground-main">
         <div className="playground-conversation-frame">
           <div className="playground-main-column">
-            <div className="playground-canvas-shell">
-              <div ref={canvasRef} className="playground-canvas" {...scrollHandlers}>
-                <Spin spinning={historyLoading} wrapperClassName="playground-spin">
+            <MessageScrollPanel
+              ariaLabel="Conversation messages"
+              className="playground-canvas-shell"
+              contentClassName="playground-canvas"
+              loading={historyLoading}
+              resetKey={activeSessionId ?? "new-chat"}
+              scrollButtonClassName="chat-scroll-tail-floating"
+              spinClassName="playground-spin"
+              watch={[chatState.nodes, chatState.streaming]}
+            >
+              {(tailRef) => (
                   <ChatStream
                     nodes={chatState.nodes}
                     streaming={chatState.streaming}
@@ -179,19 +175,8 @@ export function PlaygroundPage() {
                     tailRef={tailRef}
                     onOpenSubagent={setSelectedSubagent}
                   />
-                </Spin>
-              </div>
-              {!followLatest ? (
-                <Button
-                  className="chat-scroll-tail-floating"
-                  icon={<ArrowDown size={16} />}
-                  theme="solid"
-                  type="tertiary"
-                  onClick={() => scrollToLatestRef.current?.()}
-                  aria-label="Scroll to latest message"
-                />
-              ) : null}
-            </div>
+              )}
+            </MessageScrollPanel>
             <div className="playground-composer">
               <Composer
                 streaming={chatState.streaming}

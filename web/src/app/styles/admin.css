@@ -24,6 +24,7 @@
   gap: 12px;
   align-items: center;
   padding: 0 8px 24px;
+  animation: contentFadeUp 360ms var(--ease-emphasized) both;
 }
 
 .brand-lockup > div:last-child {
@@ -81,12 +82,21 @@
   color: #9fb2c7;
   text-decoration: none;
   border-radius: 8px;
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-normal) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .admin-nav-link.active,
 .admin-nav-link:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-nav-link:hover {
+  transform: translateX(2px);
 }
 
 .admin-nav-link.active {
@@ -107,6 +117,7 @@
   background: rgba(255, 255, 255, 0.9);
   border-bottom: 1px solid #e7edf4;
   backdrop-filter: blur(14px);
+  animation: contentFadeUp 320ms var(--ease-emphasized) both;
 }
 
 .page-eyebrow {
@@ -159,6 +170,16 @@
     linear-gradient(115deg, rgba(217, 45, 58, 0.08), transparent 28%),
     linear-gradient(245deg, rgba(33, 150, 153, 0.08), transparent 32%),
     #f4f7fb;
+}
+
+.route-transition {
+  min-width: 0;
+  min-height: 0;
+  animation: contentFadeUp 260ms var(--ease-emphasized) both;
+}
+
+.route-transition:has(.playground-shell) {
+  height: 100%;
 }
 
 /* shared background decoration: subtle drifting grid + scanline overlay */

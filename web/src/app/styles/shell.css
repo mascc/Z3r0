@@ -9,9 +9,15 @@
   border: 1px solid rgba(216, 225, 236, 0.18);
   border-radius: 8px;
   box-shadow: 0 24px 70px rgba(6, 12, 22, 0.36);
+  animation: contentScaleIn 220ms var(--ease-emphasized) both;
+  transition:
+    opacity var(--motion-normal) var(--ease-standard),
+    box-shadow var(--motion-normal) var(--ease-standard),
+    border-color var(--motion-normal) var(--ease-standard);
 }
 
 .shell-window-hidden {
+  opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
@@ -28,6 +34,12 @@
   border-bottom: 1px solid rgba(216, 225, 236, 0.12);
   cursor: move;
   user-select: none;
+  transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+
+.shell-window-header:hover {
+  background: #141d2d;
+  border-bottom-color: rgba(216, 225, 236, 0.18);
 }
 
 .shell-window-maximized .shell-window-header {
@@ -66,11 +78,16 @@
 
 .shell-window-actions .semi-button {
   color: #b7c5d5;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .shell-window-actions .semi-button:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
 }
 
 .shell-terminal {
@@ -163,12 +180,17 @@
   border-radius: 8px 0 0 8px;
   box-shadow: 0 18px 45px rgba(6, 12, 22, 0.26);
   cursor: pointer;
-  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  animation: panelSlideIn 220ms var(--ease-emphasized) both;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .shell-minimized-button:hover {
   background: #172033;
   box-shadow: 0 22px 54px rgba(6, 12, 22, 0.32);
+  transform: translateX(-3px);
 }
 
 .novnc-minimized-button {
@@ -257,11 +279,16 @@
   height: 28px;
   padding: 0 4px;
   color: #b7c5d5;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .file-manager-toolbar .semi-button:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
 }
 
 .file-manager-toolbar .semi-button:disabled {
@@ -304,6 +331,9 @@
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
 
 .file-manager-breadcrumb-item:hover {
@@ -328,14 +358,21 @@
   padding: 0 12px;
   border-bottom: 1px solid rgba(216, 225, 236, 0.04);
   cursor: pointer;
+  animation: rowFadeIn 160ms var(--ease-emphasized) both;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .file-manager-list-row:hover {
   background: rgba(255, 255, 255, 0.03);
+  transform: translateX(2px);
 }
 
 .file-manager-list-row-selected {
   background: rgba(53, 80, 110, 0.28);
+  box-shadow: inset 3px 0 0 rgba(96, 165, 250, 0.72);
 }
 
 .file-manager-list-row-selected:hover {
@@ -354,10 +391,12 @@
   font-weight: 600;
   text-transform: uppercase;
   cursor: default;
+  animation: none;
 }
 
 .file-manager-list-head:hover {
   background: #0d1321;
+  transform: none;
 }
 
 .file-manager-name {
@@ -411,14 +450,21 @@
   border-radius: 6px;
   cursor: pointer;
   overflow: hidden;
+  animation: contentScaleIn 180ms var(--ease-emphasized) both;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .file-manager-icon-item:hover {
   background: rgba(255, 255, 255, 0.04);
+  transform: translateY(-2px);
 }
 
 .file-manager-icon-item-selected {
   background: rgba(53, 80, 110, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.42);
 }
 
 .file-manager-icon-item-selected:hover {
@@ -454,6 +500,7 @@
   font-size: 13px;
   font-family: inherit;
   outline: none;
+  animation: contentScaleIn 160ms var(--ease-emphasized) both;
 }
 
 .file-manager-inline-input::placeholder {
@@ -526,6 +573,7 @@
   inset: 0;
   z-index: 5;
   background: #0b111c;
+  animation: contentFadeUp 180ms var(--ease-emphasized) both;
 }
 
 /* ── file viewer ──────────────────────────────────────────────────────────── */
@@ -554,11 +602,16 @@
   padding: 0 6px;
   color: #b7c5d5;
   font-size: 12px;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
 .fv-toolbar .semi-button:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
 }
 
 .fv-title {
@@ -693,7 +746,10 @@
 
 
 @media (prefers-reduced-motion: reduce) {
-  .shell-minimized-button {
+  .shell-window,
+  .shell-minimized-button,
+  .shell-flight {
     transition: none;
+    animation: none;
   }
 }

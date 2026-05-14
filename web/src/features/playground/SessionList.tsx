@@ -1,11 +1,9 @@
 import { Button, Popconfirm, Spin } from "@douyinfe/semi-ui";
 import { FolderKanban, MessageCircle, Trash2 } from "lucide-react";
-import type { AgentInfo, AgentSessionSummary, SessionType } from "../../shared/api/types";
-import { formatDateTime } from "../../shared/lib/date";
+import type { AgentSessionSummary, SessionType } from "../../shared/api/types";
 
 type SessionListProps = {
   sessions: AgentSessionSummary[];
-  agents: AgentInfo[];
   loading: boolean;
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
@@ -17,8 +15,7 @@ const SESSION_ICON: Record<SessionType, typeof MessageCircle> = {
   project: FolderKanban,
 };
 
-export function SessionList({ sessions, agents, loading, activeSessionId, onSelect, onDelete }: SessionListProps) {
-  const agentNameByCode = new Map(agents.map((agent) => [agent.code, agent.name]));
+export function SessionList({ sessions, loading, activeSessionId, onSelect, onDelete }: SessionListProps) {
   return (
     <div className="session-list">
       <div className="session-list-body">
@@ -41,13 +38,6 @@ export function SessionList({ sessions, agents, loading, activeSessionId, onSele
                     <span className="session-row-icon"><Icon size={14} /></span>
                     <span className="session-row-body">
                       <span className="session-row-title">{session.title || "Untitled session"}</span>
-                      <span className="session-row-meta">
-                        {session.agent_code ? (
-                          <span className="session-row-agent">@{agentNameByCode.get(session.agent_code) ?? session.agent_code}</span>
-                        ) : null}
-                        <span>{session.message_count} messages</span>
-                        <span>· {formatDateTime(session.updated_at)}</span>
-                      </span>
                     </span>
                   </button>
                   <Popconfirm

@@ -1,6 +1,6 @@
 import { Button } from "@douyinfe/semi-ui";
-import { ArrowDown, GitBranch, X } from "lucide-react";
-import { useMemo, useRef } from "react";
+import { GitBranch, X } from "lucide-react";
+import { useMemo } from "react";
 import type { AgentInfo } from "../../shared/api/types";
 import type { ChatNode, SubagentExecutionItem } from "./playgroundReducer";
 import {
@@ -9,8 +9,8 @@ import {
   type SubagentTab,
   type SubagentTarget,
 } from "./subagentView";
+import { MessageScrollPanel } from "./MessageScrollPanel";
 import { ExecutionSection, SubagentStatusTag, TranscriptContent } from "./Transcript";
-import { useAutoFollowScroll } from "./useAutoFollowScroll";
 
 export function SubagentSidePanel({
   nodes,
@@ -36,14 +36,7 @@ export function SubagentSidePanel({
     () => new Map(agents.map((agent) => [agent.code, agent.name])),
     [agents],
   );
-  const bodyRef = useRef<HTMLDivElement | null>(null);
   const selectionKey = selection ?? "";
-  const { following: followLatest, tailRef, scrollHandlers, scrollToLatest } = useAutoFollowScroll({
-    enabled: open,
-    containerRef: bodyRef,
-    resetKey: selectionKey,
-    watch: [target],
-  });
 
   return (
     <aside className={`subagent-side-panel${open ? " subagent-side-panel-open" : ""}`} aria-hidden={!open}>
@@ -76,22 +69,22 @@ export function SubagentSidePanel({
           ) : null}
           <Button icon={<X size={14} />} theme="borderless" type="tertiary" onClick={onClose} aria-label="Close subagent panel" />
         </div>
-        <div className="subagent-side-body-shell">
-          <div ref={bodyRef} className="subagent-side-body" {...scrollHandlers}>
-            {target ? <SubagentTargetView target={target} /> : <div className="transcript-empty">Subagent output is no longer available.</div>}
-            <div ref={tailRef} className="chat-tail" />
-          </div>
-          {open && !followLatest ? (
-            <Button
-              className="subagent-scroll-tail-floating"
-              icon={<ArrowDown size={16} />}
-              theme="solid"
-              type="tertiary"
-              onClick={scrollToLatest}
-              aria-label="Scroll subagent messages to latest"
-            />
-          ) : null}
-        </div>
+        <MessageScrollPanel
+          ariaLabel="Subagent messages"
+          className="subagent-side-body-shell"
+          contentClassName="subagent-side-body"
+          enabled={open}
+          resetKey={selectionKey}
+          scrollButtonClassName="subagent-scroll-tail-floating"
+          watch={[target]}
+        >
+          {(tailRef) => (
+            <>
+              {target ? <SubagentTargetView target={target} /> : <div className="transcript-empty">Subagent output is no longer available.</div>}
+              <div ref={tailRef} className="chat-tail" />
+            </>
+          )}
+        </MessageScrollPanel>
       </div>
     </aside>
   );

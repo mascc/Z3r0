@@ -145,10 +145,10 @@ function ThinkingGroup({
   }, [active]);
 
   useEffect(() => {
-    if (open && active && bodyRef.current) {
+    if (open && bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
-  }, [text, active, open]);
+  }, [text, open]);
 
   return (
     <div className={`thinking-block${live ? " transcript-panel-live" : ""}${active ? " thinking-block-active" : ""}`}>

@@ -2,7 +2,6 @@ import { RefObject, TouchEvent, WheelEvent, useCallback, useEffect, useLayoutEff
 
 type UseAutoFollowScrollOptions<T extends HTMLElement> = {
   enabled?: boolean;
-  followLatest?: boolean;
   onFollowLatestChange?: (following: boolean) => void;
   onScrollToLatestReady?: (handler: (() => void) | null) => void;
   containerRef: RefObject<T | null>;
@@ -12,7 +11,6 @@ type UseAutoFollowScrollOptions<T extends HTMLElement> = {
 
 export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   enabled = true,
-  followLatest,
   onFollowLatestChange,
   onScrollToLatestReady,
   containerRef,
@@ -23,16 +21,13 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   const touchStartYRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
   const followingRef = useRef(true);
-  const userPausedRef = useRef(false);
-  const [internalFollowLatest, setInternalFollowLatest] = useState(true);
-  const following = followLatest ?? internalFollowLatest;
+  const [following, setFollowingState] = useState(true);
 
-  const setFollowing = useCallback((next: boolean, userPaused = !next) => {
+  const setFollowing = useCallback((next: boolean) => {
     followingRef.current = next;
-    userPausedRef.current = userPaused;
-    if (followLatest === undefined) setInternalFollowLatest(next);
+    setFollowingState(next);
     onFollowLatestChange?.(next);
-  }, [followLatest, onFollowLatestChange]);
+  }, [onFollowLatestChange]);
 
   const getContainer = useCallback(() => {
     return containerRef.current;
@@ -46,13 +41,13 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   }, [getContainer]);
 
   const scrollToLatest = useCallback(() => {
-    setFollowing(true, false);
+    setFollowing(true);
     scrollTail("smooth");
   }, [scrollTail, setFollowing]);
 
   useEffect(() => {
     if (resetKey == null) return;
-    setFollowing(true, false);
+    setFollowing(true);
     lastScrollTopRef.current = 0;
     touchStartYRef.current = null;
   }, [resetKey, setFollowing]);
@@ -67,11 +62,15 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
     const syncFollowing = () => {
       const scrollingUp = container.scrollTop < lastScrollTopRef.current - 2;
       lastScrollTopRef.current = container.scrollTop;
+
       if (scrollingUp) {
         setFollowing(false);
         return;
       }
-      if (isNearScrollTail(container)) setFollowing(true, false);
+
+      if (isNearScrollTail(container)) {
+        setFollowing(true);
+      }
     };
 
     onScrollToLatestReady?.(scrollToLatest);
@@ -85,17 +84,22 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   useLayoutEffect(() => {
     if (!enabled || !followingRef.current) return;
     scrollTail("auto");
-    const frame = window.requestAnimationFrame(() => scrollTail("auto"));
-    return () => window.cancelAnimationFrame(frame);
-  }, [enabled, following, scrollTail, ...watch]);
-
-  const pauseFollowing = useCallback(() => {
-    if (followingRef.current || !userPausedRef.current) setFollowing(false, true);
-  }, [setFollowing]);
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollTail("auto");
+      secondFrame = window.requestAnimationFrame(() => scrollTail("auto"));
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [enabled, following, resetKey, scrollTail, ...watch]);
 
   const handleWheel = useCallback((event: WheelEvent<T>) => {
-    if (event.deltaX !== 0 || event.deltaY !== 0) pauseFollowing();
-  }, [pauseFollowing]);
+    if (event.deltaY < 0) {
+      setFollowing(false);
+    }
+  }, [setFollowing]);
 
   const handleTouchStart = useCallback((event: TouchEvent<T>) => {
     touchStartYRef.current = event.touches[0]?.clientY ?? null;
@@ -104,8 +108,11 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   const handleTouchMove = useCallback((event: TouchEvent<T>) => {
     const startY = touchStartYRef.current;
     const currentY = event.touches[0]?.clientY;
-    if (startY != null && currentY != null && Math.abs(currentY - startY) > 2) pauseFollowing();
-  }, [pauseFollowing]);
+    if (startY == null || currentY == null || Math.abs(currentY - startY) <= 2) return;
+    if (currentY > startY) {
+      setFollowing(false);
+    }
+  }, [setFollowing]);
 
   return {
     following,

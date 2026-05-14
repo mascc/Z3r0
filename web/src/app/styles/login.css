@@ -41,6 +41,7 @@
   border-radius: 8px;
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(20px);
+  animation: contentScaleIn 360ms var(--ease-emphasized) both;
 }
 
 .login-brand {
@@ -48,6 +49,7 @@
   gap: 16px;
   align-items: center;
   margin-bottom: 34px;
+  animation: contentFadeUp 420ms var(--ease-emphasized) both;
 }
 
 .login-brand h1 {
@@ -75,6 +77,7 @@
   color: inherit;
   font-size: 13px;
   font-weight: 650;
+  animation: rowFadeIn 260ms var(--ease-emphasized) both;
 }
 
 .login-form label span {
@@ -85,6 +88,10 @@
   color: #f8fafc;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.18);
+  transition:
+    background var(--motion-normal) var(--ease-standard),
+    border-color var(--motion-normal) var(--ease-standard),
+    box-shadow var(--motion-normal) var(--ease-standard);
 }
 
 .login-form .semi-input-wrapper__with-prefix {
@@ -95,6 +102,7 @@
 .login-form .semi-input-wrapper-focus {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(156, 199, 203, 0.72);
+  box-shadow: 0 0 0 4px rgba(156, 199, 203, 0.08);
 }
 
 .login-form .semi-input,
