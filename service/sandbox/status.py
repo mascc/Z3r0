@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 _STATUS_MONITOR_INTERVAL_SECONDS = 5
 _TOOL_BINDING_INSPECT_TTL_SECONDS = 3
 _status_monitor_task: asyncio.Task[None] | None = None
+_tool_invalidation_tasks: set[asyncio.Task[None]] = set()
 _tool_binding_state_cache: dict[int, "DockerStateCacheEntry"] = {}
 
 
@@ -104,10 +105,12 @@ def _schedule_agent_tool_invalidation(container_id: int) -> None:
         logger.debug("no running loop for agent tool invalidation: %s", container_id)
         return
 
-    loop.create_task(
+    task = loop.create_task(
         invalidate_agent_tool_bindings(container_id),
         name=f"agent-tool-invalidate-{container_id}",
     )
+    _tool_invalidation_tasks.add(task)
+    task.add_done_callback(_tool_invalidation_tasks.discard)
 
 
 async def invalidate_agent_tool_bindings(container_id: int) -> None:
@@ -122,6 +125,8 @@ async def invalidate_agent_tool_bindings(container_id: int) -> None:
 
 async def _invalidate_all_agent_tool_bindings() -> None:
     _clear_tool_binding_state_cache()
+    if _tool_invalidation_tasks:
+        await asyncio.gather(*tuple(_tool_invalidation_tasks), return_exceptions=True)
     try:
         from core.runtime.session import get_agent_pool
 
@@ -193,17 +198,26 @@ async def stop_sandbox_container_status_monitor() -> None:
     global _status_monitor_task
     task, _status_monitor_task = _status_monitor_task, None
     if task is None or task.done():
+        await _drain_tool_invalidation_tasks()
         return
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         pass
+    await _drain_tool_invalidation_tasks()
     logger.info("sandbox container status monitor stopped")
 
 
 async def invalidate_all_agent_tool_bindings() -> None:
     await _invalidate_all_agent_tool_bindings()
+
+
+async def _drain_tool_invalidation_tasks() -> None:
+    tasks = tuple(_tool_invalidation_tasks)
+    if not tasks:
+        return
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def resolve_sandbox_container_tool_binding(

@@ -22,6 +22,11 @@ from schema.agent.subordinates import AgentSubordinateTaskSnapshot
 
 logger = get_logger(__name__)
 _notification_claim_lock = asyncio.Lock()
+_TERMINAL_NOTIFICATION_STATUSES = {
+    AgentNotificationStatus.COMPLETED,
+    AgentNotificationStatus.FAILED,
+    AgentNotificationStatus.CANCELED,
+}
 
 
 async def enqueue_subagent_finished_notification(
@@ -214,14 +219,26 @@ async def release_notification(notification_id: str) -> AgentNotificationSnapsho
             return None
         if notification.status != AgentNotificationStatus.PROCESSING.value:
             return snapshot_from_notification(notification)
-        notification.status = AgentNotificationStatus.PENDING.value
-        notification.error = ""
-        notification.started_at = None
-        notification.updated_at = now
-        session.add(notification)
+        updated = await session.exec(
+            update(AgentNotification)
+            .where(
+                AgentNotification.id == notification_id,
+                AgentNotification.status == AgentNotificationStatus.PROCESSING.value,
+            )
+            .values(
+                status=AgentNotificationStatus.PENDING.value,
+                error="",
+                started_at=None,
+                updated_at=now,
+            )
+        )
+        if updated.rowcount != 1:
+            await session.rollback()
+            current = await session.get(AgentNotification, notification_id)
+            return snapshot_from_notification(current) if current is not None else None
         await session.commit()
-        await session.refresh(notification)
-        return snapshot_from_notification(notification)
+        current = await session.get(AgentNotification, notification_id)
+        return snapshot_from_notification(current) if current is not None else None
 
 
 async def cancel_session_notifications(
@@ -287,14 +304,28 @@ async def _finish_notification(
         notification = await session.get(AgentNotification, notification_id)
         if notification is None:
             return None
-        notification.status = status.value
-        notification.error = error
-        notification.updated_at = now
-        notification.finished_at = now
-        session.add(notification)
+        if _coerce_status(notification.status) in _TERMINAL_NOTIFICATION_STATUSES:
+            return snapshot_from_notification(notification)
+        updated = await session.exec(
+            update(AgentNotification)
+            .where(
+                AgentNotification.id == notification_id,
+                AgentNotification.status == AgentNotificationStatus.PROCESSING.value,
+            )
+            .values(
+                status=status.value,
+                error=error,
+                updated_at=now,
+                finished_at=now,
+            )
+        )
+        if updated.rowcount != 1:
+            await session.rollback()
+            current = await session.get(AgentNotification, notification_id)
+            return snapshot_from_notification(current) if current is not None else None
         await session.commit()
-        await session.refresh(notification)
-        return snapshot_from_notification(notification)
+        current = await session.get(AgentNotification, notification_id)
+        return snapshot_from_notification(current) if current is not None else None
 
 
 def snapshot_from_notification(notification: AgentNotification) -> AgentNotificationSnapshot:

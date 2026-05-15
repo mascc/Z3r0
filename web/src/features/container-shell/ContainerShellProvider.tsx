@@ -136,6 +136,7 @@ const DOCK_BUTTON_RIGHT = 0;
 const DOCK_BUTTON_SIZE = 46;
 const DOCK_BUTTON_GAP = 54;
 const WINDOW_DOCK_TRANSITION_MS = 420;
+const SHELL_OUTPUT_DECODER = new TextDecoder();
 
 const ContainerShellContext = createContext<ContainerShellContextValue | null>(null);
 
@@ -437,18 +438,18 @@ export function ContainerShellProvider({ children }: { children: ReactNode }) {
         terminal.write(event.data);
         return;
       }
-      const decoder = new TextDecoder();
-      terminal.write(decoder.decode(event.data as ArrayBuffer));
+      terminal.write(SHELL_OUTPUT_DECODER.decode(event.data as ArrayBuffer));
     });
-    socket.addEventListener("close", () => {
+    const onSocketTerminated = () => {
       setShell((current) => current ? { ...current, status: "closed" } : current);
-    });
-    socket.addEventListener("error", () => {
-      setShell((current) => current ? { ...current, status: "closed" } : current);
-    });
+    };
+    socket.addEventListener("close", onSocketTerminated);
+    socket.addEventListener("error", onSocketTerminated);
 
     return () => {
       disposable.dispose();
+      socket.removeEventListener("close", onSocketTerminated);
+      socket.removeEventListener("error", onSocketTerminated);
       socket.close();
       terminal.dispose();
       if (socketRef.current === socket) socketRef.current = null;

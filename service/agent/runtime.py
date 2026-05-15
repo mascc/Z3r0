@@ -35,7 +35,7 @@ async def submit_turn(
         user_role=user.role,
     )
     context = await build_runtime_context(session_id, user, sandbox_container_id, agent_code)
-    runtime = get_agent_pool().get_or_create(session_id)
+    runtime = await get_agent_pool().get_or_create(session_id)
     await runtime.start_turn(text, agent_code, context)
 
 

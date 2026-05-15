@@ -56,6 +56,9 @@ class AgentSession:
         task = self._current_task
         return task is not None and not task.done()
 
+    def has_subscribers(self) -> bool:
+        return bool(self._subscribers)
+
     async def subscribe(self) -> asyncio.Queue[AgentEventSchema]:
         queue: asyncio.Queue[AgentEventSchema] = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_SIZE)
         if self.is_running():
@@ -417,6 +420,9 @@ class AgentSession:
         for queue in tuple(self._subscribers):
             _put_nowait_drop_oldest(queue, event)
 
+        if isinstance(event, DoneEvent):
+            self._live_projection.reset(RunStateEvent(created_at=event.created_at, running=False))
+
 
 @dataclass
 class _PooledSession:
@@ -433,6 +439,7 @@ class AgentSessionPool:
         self._sweep_interval = cfg.sweep_interval_seconds
         self._pool: dict[str, _PooledSession] = {}
         self._sweeper_task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
 
     @property
     def registry(self) -> AgentRegistry:
@@ -456,26 +463,32 @@ class AgentSessionPool:
             except asyncio.CancelledError:
                 pass
 
-        entries = list(self._pool.values())
-        session_ids = list(self._pool.keys())
-        self._pool.clear()
+        async with self._lock:
+            entries = list(self._pool.values())
+            session_ids = list(self._pool.keys())
+            self._pool.clear()
         await asyncio.gather(*(entry.session.shutdown() for entry in entries), return_exceptions=True)
         await _mark_sessions_stopped(session_ids)
         logger.debug("agent pool stopped")
 
-    def get_or_create(self, session_id: str) -> AgentSession:
+    async def get_or_create(self, session_id: str) -> AgentSession:
+        async with self._lock:
+            return self._get_or_create_locked(session_id)
+
+    def _get_or_create_locked(self, session_id: str) -> AgentSession:
         entry = self._pool.get(session_id)
         if entry is None:
             entry = _PooledSession(session=AgentSession(session_id, self._registry))
             self._pool[session_id] = entry
             logger.debug("agent pool created session=%s", session_id)
-            self._enforce_capacity()
+            self._enforce_capacity_locked()
         else:
             entry.last_used_at = time.monotonic()
         return entry.session
 
     async def discard(self, session_id: str) -> None:
-        entry = self._pool.pop(session_id, None)
+        async with self._lock:
+            entry = self._pool.pop(session_id, None)
         if entry is None:
             await _force_mark_session_stopped(session_id)
             return
@@ -483,20 +496,23 @@ class AgentSessionPool:
         logger.debug("agent pool discarded session=%s", session_id)
 
     async def try_interrupt(self, session_id: str) -> bool:
-        entry = self._pool.get(session_id)
+        async with self._lock:
+            entry = self._pool.get(session_id)
         if entry is None:
             return False
         return await entry.session.interrupt()
 
     async def subscribe(self, session_id: str) -> tuple[AgentSession, asyncio.Queue[AgentEventSchema]]:
-        session = self.get_or_create(session_id)
+        session = await self.get_or_create(session_id)
         return session, await session.subscribe()
 
     async def drain_notifications(self, session_id: str, context: AgentRuntimeContext) -> bool:
-        return await self.get_or_create(session_id).start_notification_drain(context)
+        session = await self.get_or_create(session_id)
+        return await session.start_notification_drain(context)
 
     async def cancel_all(self, session_id: str) -> bool:
-        entry = self._pool.get(session_id)
+        async with self._lock:
+            entry = self._pool.get(session_id)
         if entry is None:
             canceled_subagents = await cancel_session_subagent_runs(session_id)
             canceled_commands = await cancel_session_async_sandbox_commands(session_id)
@@ -509,10 +525,11 @@ class AgentSessionPool:
         return await entry.session.cancel_all()
 
     async def invalidate_tool_bindings(self, container_id: int | None = None) -> None:
-        entries = [
-            entry for entry in self._pool.values()
-            if container_id is None or entry.session.uses_sandbox_container(container_id)
-        ]
+        async with self._lock:
+            entries = [
+                entry for entry in self._pool.values()
+                if container_id is None or entry.session.uses_sandbox_container(container_id)
+            ]
         tasks = [entry.session.invalidate_tool_binding() for entry in entries]
         if container_id is not None:
             tasks.extend([
@@ -528,31 +545,40 @@ class AgentSessionPool:
         while True:
             try:
                 await asyncio.sleep(self._sweep_interval)
-                self._sweep_expired(time.monotonic())
+                async with self._lock:
+                    self._sweep_expired_locked(time.monotonic())
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("agent pool sweep iteration failed")
 
-    def _sweep_expired(self, now: float) -> None:
+    def _sweep_expired_locked(self, now: float) -> None:
         if self._ttl <= 0:
             return
         expired = [
             sid for sid, entry in self._pool.items()
-            if not entry.session.is_running() and now - entry.last_used_at > self._ttl
+            if (
+                not entry.session.is_running()
+                and not entry.session.has_subscribers()
+                and now - entry.last_used_at > self._ttl
+            )
         ]
         for sid in expired:
             entry = self._pool.pop(sid)
             entry.session.close()
             logger.debug("agent pool evicted idle session=%s", sid)
 
-    def _enforce_capacity(self) -> None:
+    def _enforce_capacity_locked(self) -> None:
         # only idle entries are evicted; running sessions may briefly exceed the cap
         overflow = len(self._pool) - self._max_size
         if overflow <= 0:
             return
         idle = sorted(
-            ((sid, entry) for sid, entry in self._pool.items() if not entry.session.is_running()),
+            (
+                (sid, entry)
+                for sid, entry in self._pool.items()
+                if not entry.session.is_running() and not entry.session.has_subscribers()
+            ),
             key=lambda kv: kv[1].last_used_at,
         )
         for sid, _ in idle[:overflow]:

@@ -76,13 +76,18 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
 
     await websocket.accept()
     send_lock = asyncio.Lock()
-    runtime, runtime_events = await get_agent_pool().subscribe(session_id)
-    subscriber = await subscribe_session_events(session_id)
-
-    runtime_forwarder = asyncio.create_task(_forward_events(websocket, runtime_events, send_lock))
-    subagent_forwarder = asyncio.create_task(_forward_events(websocket, subscriber, send_lock))
+    runtime = None
+    runtime_events: asyncio.Queue[AgentEventSchema] | None = None
+    subscriber: asyncio.Queue[AgentEventSchema] | None = None
+    runtime_forwarder: asyncio.Task | None = None
+    subagent_forwarder: asyncio.Task | None = None
 
     try:
+        runtime, runtime_events = await get_agent_pool().subscribe(session_id)
+        subscriber = await subscribe_session_events(session_id)
+        runtime_forwarder = asyncio.create_task(_forward_events(websocket, runtime_events, send_lock))
+        subagent_forwarder = asyncio.create_task(_forward_events(websocket, subscriber, send_lock))
+
         while True:
             payload = await websocket.receive_json()
             try:
@@ -117,8 +122,10 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
         logger.exception("agent stream failed for session=%s", session_id)
         await _close_silently(websocket)
     finally:
-        runtime.unsubscribe(runtime_events)
-        await unsubscribe_session_events(session_id, subscriber)
+        if runtime is not None and runtime_events is not None:
+            runtime.unsubscribe(runtime_events)
+        if subscriber is not None:
+            await unsubscribe_session_events(session_id, subscriber)
         await _cancel_task(runtime_forwarder)
         await _cancel_task(subagent_forwarder)
 

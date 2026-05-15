@@ -29,5 +29,5 @@ async def recover_pending_sessions() -> None:
             continue
         auth_user = AuthUser(id=user.id, role=user.role, email=user.email, username=user.username)
         agent_code = session.runtime_agent_code or session.agent_code
-        runtime = get_agent_pool().get_or_create(session.session_id)
+        runtime = await get_agent_pool().get_or_create(session.session_id)
         await runtime.start_notification_drain(build_base_runtime_context(session.session_id, auth_user, agent_code))

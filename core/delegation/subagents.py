@@ -54,10 +54,16 @@ _jobs: dict[str, _SubagentJob] = {}
 _session_starters: dict[str, set[asyncio.Task[AgentSubordinateTaskSnapshot]]] = defaultdict(set)
 _subscribers: dict[str, set[asyncio.Queue[AgentEventSchema]]] = defaultdict(set)
 _live_projections: dict[str, LiveEventProjection] = {}
+_jobs_lock = asyncio.Lock()
 _subscribers_lock = asyncio.Lock()
 
 _SUBSCRIBER_QUEUE_SIZE = 256
 _CANCEL_MESSAGE = "Subagent task canceled."
+_TERMINAL_SUBAGENT_STATUSES = {
+    AgentSubordinateStatus.COMPLETED,
+    AgentSubordinateStatus.FAILED,
+    AgentSubordinateStatus.CANCELED,
+}
 
 
 def build_subagent_tools(
@@ -101,7 +107,7 @@ def build_subagent_tools(
             ),
             name=f"subagent-starter-{code}",
         )
-        _track_subagent_starter(ctx.context.session_id, starter)
+        await _track_subagent_starter(ctx.context.session_id, starter)
         try:
             snapshot = await asyncio.shield(starter)
         except asyncio.CancelledError:
@@ -227,28 +233,30 @@ async def start_subagent_task_run(
     )
     await _mark_parent_session_running(snapshot, context)
     runtime_context = _subagent_context(context, snapshot, agent_code)
-    task = asyncio.create_task(
-        _run_subagent_task(
-            snapshot=snapshot,
-            child_agent=child_agent,
-            code_to_name=code_to_name,
-            context=runtime_context,
-        ),
-        name=f"subagent-{agent_code}-{snapshot.run_id}",
-    )
-    _jobs[snapshot.run_id] = _SubagentJob(
-        task=task,
-        session_id=snapshot.session_id,
-        sandbox_container_id=runtime_context.sandbox_container_id,
-    )
-    await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
+    async with _jobs_lock:
+        task = asyncio.create_task(
+            _run_subagent_task(
+                snapshot=snapshot,
+                child_agent=child_agent,
+                code_to_name=code_to_name,
+                context=runtime_context,
+            ),
+            name=f"subagent-{agent_code}-{snapshot.run_id}",
+        )
+        _jobs[snapshot.run_id] = _SubagentJob(
+            task=task,
+            session_id=snapshot.session_id,
+            sandbox_container_id=runtime_context.sandbox_container_id,
+        )
+    await _publish_task_snapshot(snapshot)
     logger.info("subagent task scheduled: %s agent=%s", snapshot.run_id, agent_code)
     return snapshot
 
 
 async def cancel_subagent_task_run(snapshot: AgentSubordinateTaskSnapshot) -> AgentSubordinateTaskSnapshot:
     agent_instance_id = subagent_instance_id(snapshot.run_id)
-    job = _jobs.get(snapshot.run_id)
+    async with _jobs_lock:
+        job = _jobs.get(snapshot.run_id)
     publish_now = job is None or job.task.done()
     if job is not None and not job.task.done():
         job.task.cancel()
@@ -264,16 +272,17 @@ async def cancel_subagent_task_run(snapshot: AgentSubordinateTaskSnapshot) -> Ag
     latest = await agent_subordinates.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
     snapshot = latest or snapshot
     if publish_now:
-        await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
+        await _publish_task_snapshot(snapshot)
     return snapshot
 
 
 async def cancel_sandbox_subagent_runs(container_id: int) -> bool:
-    tasks = [
-        _jobs.pop(run_id).task
-        for run_id, job in list(_jobs.items())
-        if job.sandbox_container_id == container_id
-    ]
+    async with _jobs_lock:
+        tasks = [
+            _jobs.pop(run_id).task
+            for run_id, job in list(_jobs.items())
+            if job.sandbox_container_id == container_id
+        ]
     if not tasks:
         return False
     for task in tasks:
@@ -284,12 +293,12 @@ async def cancel_sandbox_subagent_runs(container_id: int) -> bool:
 
 
 async def cancel_session_subagent_runs(session_id: str) -> bool:
-    starter_tasks = _cancel_session_starters(session_id)
-    job_tasks = _cancel_session_jobs(session_id)
+    starter_tasks = await _cancel_session_starters(session_id)
+    job_tasks = await _cancel_session_jobs(session_id)
     if starter_tasks:
         await asyncio.gather(*starter_tasks, return_exceptions=True)
 
-    job_tasks.extend(_cancel_session_jobs(session_id))
+    job_tasks.extend(await _cancel_session_jobs(session_id))
     if job_tasks:
         await asyncio.gather(*job_tasks, return_exceptions=True)
 
@@ -298,13 +307,14 @@ async def cancel_session_subagent_runs(session_id: str) -> bool:
         _CANCEL_MESSAGE,
     )
     for snapshot in snapshots:
-        await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
+        await _publish_task_snapshot(snapshot)
 
     return bool(starter_tasks or job_tasks or snapshots)
 
 
-def _track_subagent_starter(session_id: str, task: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
-    _session_starters[session_id].add(task)
+async def _track_subagent_starter(session_id: str, task: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
+    async with _jobs_lock:
+        _session_starters[session_id].add(task)
 
     def _forget_starter(completed: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
         starters = _session_starters.get(session_id)
@@ -317,24 +327,26 @@ def _track_subagent_starter(session_id: str, task: asyncio.Task[AgentSubordinate
     task.add_done_callback(_forget_starter)
 
 
-def _cancel_session_starters(session_id: str) -> list[asyncio.Task[AgentSubordinateTaskSnapshot]]:
-    starters = list(_session_starters.pop(session_id, ()))
+async def _cancel_session_starters(session_id: str) -> list[asyncio.Task[AgentSubordinateTaskSnapshot]]:
+    async with _jobs_lock:
+        starters = list(_session_starters.pop(session_id, ()))
     pending = [task for task in starters if not task.done()]
     for task in pending:
         task.cancel()
     return pending
 
 
-def _cancel_session_jobs(session_id: str) -> list[asyncio.Task[None]]:
-    tasks: list[asyncio.Task[None]] = []
-    for run_id, job in list(_jobs.items()):
-        if job.session_id != session_id:
-            continue
-        _jobs.pop(run_id, None)
-        if not job.task.done():
-            job.task.cancel()
-            tasks.append(job.task)
-    return tasks
+async def _cancel_session_jobs(session_id: str) -> list[asyncio.Task[None]]:
+    async with _jobs_lock:
+        tasks: list[asyncio.Task[None]] = []
+        for run_id, job in list(_jobs.items()):
+            if job.session_id != session_id:
+                continue
+            _jobs.pop(run_id, None)
+            if not job.task.done():
+                job.task.cancel()
+                tasks.append(job.task)
+        return tasks
 
 
 async def start_subagent_runtime() -> None:
@@ -350,13 +362,13 @@ async def start_subagent_runtime() -> None:
 
 
 async def stop_subagent_runtime() -> None:
-    starter_tasks = [task for tasks in _session_starters.values() for task in tasks if not task.done()]
-    _session_starters.clear()
+    async with _jobs_lock:
+        starter_tasks = [task for tasks in _session_starters.values() for task in tasks if not task.done()]
+        _session_starters.clear()
+        jobs = list(_jobs.values())
+        _jobs.clear()
     for task in starter_tasks:
         task.cancel()
-
-    jobs = list(_jobs.values())
-    _jobs.clear()
     for job in jobs:
         if not job.task.done():
             job.task.cancel()
@@ -368,7 +380,7 @@ async def stop_subagent_runtime() -> None:
 
     snapshots = await agent_subordinates.cancel_running_subagent_tasks(_CANCEL_MESSAGE)
     for snapshot in snapshots:
-        await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
+        await _publish_task_snapshot(snapshot)
 
 
 async def subscribe_session_events(session_id: str) -> asyncio.Queue[AgentEventSchema]:
@@ -402,8 +414,22 @@ async def publish_subagent_event(session_id: str, event: AgentEventSchema) -> No
         _put_nowait_drop_oldest(queue, event)
 
 
-def _clear_subagent_projection(session_id: str) -> None:
-    _live_projections.pop(session_id, None)
+async def _publish_task_snapshot(snapshot: AgentSubordinateTaskSnapshot) -> None:
+    await publish_subagent_event(snapshot.session_id, _task_event(snapshot))
+    if snapshot.status in _TERMINAL_SUBAGENT_STATUSES:
+        await _clear_subagent_projection_if_idle(snapshot.session_id)
+
+
+async def _clear_subagent_projection_if_idle(session_id: str) -> None:
+    async with _jobs_lock:
+        has_running = any(
+            job.session_id == session_id and not job.task.done()
+            for job in _jobs.values()
+        )
+    if has_running:
+        return
+    async with _subscribers_lock:
+        _live_projections.pop(session_id, None)
 
 
 def _live_projection(session_id: str) -> LiveEventProjection:
@@ -467,7 +493,7 @@ async def _run_subagent_task(
         completed = await agent_subordinates.complete_subagent_task(snapshot.run_id, _final_text(result))
         if completed is not None:
             await _queue_parent_notification(completed, context)
-            await publish_subagent_event(completed.session_id, _task_event(completed))
+            await _publish_task_snapshot(completed)
     except asyncio.CancelledError:
         await cancel_agent_async_sandbox_commands(
             session_id=snapshot.session_id,
@@ -481,7 +507,7 @@ async def _run_subagent_task(
         canceled = await agent_subordinates.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
         if canceled is not None:
             await _queue_parent_notification(canceled, context)
-            await publish_subagent_event(canceled.session_id, _task_event(canceled))
+            await _publish_task_snapshot(canceled)
     except Exception as exc:
         logger.exception("subagent task failed: %s", snapshot.run_id)
         tagged_error = _tag_nested(ErrorEvent(created_at=datetime.now(), agent_name=child_agent.name, message=f"Subagent failed: {exc}"), snapshot)
@@ -494,20 +520,23 @@ async def _run_subagent_task(
         failed = await agent_subordinates.fail_subagent_task(snapshot.run_id, str(exc) or "subagent failed")
         if failed is not None:
             await _queue_parent_notification(failed, context)
-            await publish_subagent_event(failed.session_id, _task_event(failed))
+            await _publish_task_snapshot(failed)
     finally:
         await cancel_agent_async_sandbox_commands(
             session_id=snapshot.session_id,
             agent_instance_id=context.agent_instance_id,
         )
-        current = _jobs.get(snapshot.run_id)
-        if current is not None and current.task is asyncio.current_task():
-            _jobs.pop(snapshot.run_id, None)
-        if not any(
-            job.session_id == snapshot.session_id and not job.task.done()
-            for job in _jobs.values()
-        ):
-            _clear_subagent_projection(snapshot.session_id)
+        async with _jobs_lock:
+            current = _jobs.get(snapshot.run_id)
+            if current is not None and current.task is asyncio.current_task():
+                _jobs.pop(snapshot.run_id, None)
+            has_running = any(
+                job.session_id == snapshot.session_id and not job.task.done()
+                for job in _jobs.values()
+            )
+        if not has_running:
+            async with _subscribers_lock:
+                _live_projections.pop(snapshot.session_id, None)
             await _mark_parent_session_stopped(snapshot.session_id)
 
 

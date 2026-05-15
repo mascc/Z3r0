@@ -46,11 +46,14 @@ export function ChatStream({
 
   const lastIndex = nodes.length - 1;
   const lastNode = nodes[lastIndex];
+  let lastTargetAgentName = "";
+
   return (
     <div className="chat-stream">
       {nodes.map((node, index) => {
         if (node.kind === "user") {
-          const targetName = agentNameByCode.get(node.targetAgentCode) ?? node.targetAgentCode;
+          const targetName = resolveAgentName(agentNameByCode, node.targetAgentCode);
+          lastTargetAgentName = targetName;
           return <UserBubble key={node.id} text={node.text} targetName={targetName} createdAt={node.createdAt} />;
         }
         const isLive = streaming && index === lastIndex;
@@ -58,6 +61,7 @@ export function ChatStream({
         return (
           <AgentBlock
             key={node.id}
+            agentName={node.agentName || lastTargetAgentName}
             transcript={node}
             live={isLive}
             selectedSubagent={selectedSubagent}
@@ -68,6 +72,7 @@ export function ChatStream({
       {streaming && lastNode?.kind === "user" ? (
         <AgentBlock
           key="pending-agent"
+          agentName={resolveAgentName(agentNameByCode, lastNode.targetAgentCode)}
           transcript={emptyAgentTranscript()}
           live
           selectedSubagent={selectedSubagent}
@@ -81,6 +86,10 @@ export function ChatStream({
 
 function MessageTimestamp({ value }: { value: string }) {
   return <time className="message-timestamp" dateTime={value}>{formatDateTime(value)}</time>;
+}
+
+function resolveAgentName(agentNameByCode: Map<string, string>, agentCode: string) {
+  return agentNameByCode.get(agentCode) ?? agentCode;
 }
 
 function UserBubble({ text, targetName, createdAt }: { text: string; targetName: string; createdAt: string }) {
@@ -103,11 +112,13 @@ function UserBubble({ text, targetName, createdAt }: { text: string; targetName:
 }
 
 function AgentBlock({
+  agentName,
   transcript,
   live,
   selectedSubagent,
   onOpenSubagent,
 }: {
+  agentName: string;
   transcript: AgentTranscript;
   live: boolean;
   selectedSubagent: SubagentSelection | null;
@@ -117,7 +128,7 @@ function AgentBlock({
     <div className="chat-row chat-row-agent">
       <div className="agent-block">
         <div className="agent-header">
-          <span className="agent-name">{transcript.agentName || "Agent"}</span>
+          {agentName ? <span>{agentName}</span> : null}
           {live ? <span className="agent-pulse" /> : null}
           {transcript.createdAt ? <MessageTimestamp value={transcript.createdAt} /> : null}
         </div>

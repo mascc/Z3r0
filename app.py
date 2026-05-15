@@ -38,6 +38,7 @@ from service.sandbox.status import (
     start_sandbox_container_status_monitor,
     stop_sandbox_container_status_monitor,
 )
+from service.sandbox.images import start_sandbox_image_runtime, stop_sandbox_image_runtime
 from service.system_user.users import create_system_user, query_system_user_by_username
 from utils.urllib3_compat import install_urllib3_closed_file_close_patch
 
@@ -95,6 +96,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         await _bootstrap_admin_user()
 
         set_tracing_disabled(True)
+        await start_sandbox_image_runtime()
         await start_async_sandbox_runtime()
         await start_subagent_runtime()
         await recover_pending_sessions()
@@ -111,6 +113,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         await invalidate_all_agent_tool_bindings()
         await stop_subagent_runtime()
         await stop_async_sandbox_commands()
+        await stop_sandbox_image_runtime()
         await get_agent_pool().stop()
         await close_engine()
 

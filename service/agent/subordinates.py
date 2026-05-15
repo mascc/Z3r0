@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlmodel import select
+from sqlmodel import select, update
 
 from database import get_async_session
 from logger import get_logger
@@ -206,16 +206,28 @@ async def _finish_subagent_task(
             return None
         if _coerce_subagent_status(task.status) in TERMINAL_SUBAGENT_STATUSES:
             return snapshot_from_task(task)
-        task.status = status.value
-        task.result = result
-        task.error = error
-        task.progress = ""
-        task.updated_at = now
-        task.finished_at = now
-        session.add(task)
+        updated = await session.exec(
+            update(AgentSubordinateTask)
+            .where(
+                AgentSubordinateTask.run_id == run_id,
+                AgentSubordinateTask.status == AgentSubordinateStatus.RUNNING.value,
+            )
+            .values(
+                status=status.value,
+                result=result,
+                error=error,
+                progress="",
+                updated_at=now,
+                finished_at=now,
+            )
+        )
+        if updated.rowcount != 1:
+            await session.rollback()
+            current = await session.get(AgentSubordinateTask, run_id)
+            return snapshot_from_task(current) if current is not None else None
         await session.commit()
-        await session.refresh(task)
-        return snapshot_from_task(task)
+        current = await session.get(AgentSubordinateTask, run_id)
+        return snapshot_from_task(current) if current is not None else None
 
 
 def snapshot_from_task(task: AgentSubordinateTask) -> AgentSubordinateTaskSnapshot:

@@ -254,7 +254,7 @@ async def execute_async_command(
         sandbox_container_generation=ctx.context.sandbox_container_generation,
         sandbox_skill_metadata=ctx.context.sandbox_skill_metadata,
     )
-    start_async_sandbox_command(
+    await start_async_sandbox_command(
         run_id=snapshot.run_id,
         context=task_context,
         wrapped_command=_build_async_command(command_text, output_path),

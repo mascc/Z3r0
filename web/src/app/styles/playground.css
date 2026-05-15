@@ -61,14 +61,11 @@
   animation: rowFadeIn 220ms var(--ease-emphasized) both;
   transition:
     background var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-normal) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
-  will-change: transform;
+    box-shadow var(--motion-normal) var(--ease-standard);
 }
 
 .session-row:hover {
   background: rgba(255, 255, 255, 0.08);
-  transform: translateX(2px);
 }
 
 .session-row-active {
@@ -516,15 +513,12 @@
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition:
-    background var(--motion-fast) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 
 .agent-picker-row:hover,
 .agent-picker-row-active {
   background: linear-gradient(135deg, rgba(217, 45, 58, 0.12), rgba(217, 45, 58, 0.04));
-  transform: translateX(2px);
 }
 
 .agent-picker-avatar {
@@ -733,7 +727,6 @@
   color: #66758b;
   font-size: 12px;
   font-weight: 700;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
@@ -741,10 +734,6 @@
   margin-left: 2px;
   font-size: 11px;
   font-weight: 700;
-}
-
-.agent-name {
-  color: #162033;
 }
 
 .agent-pulse {
@@ -1019,14 +1008,14 @@
   position: relative;
   min-width: 0;
   max-width: 100%;
-  max-height: 96px;
+  max-height: 132px;
   overflow: hidden;
 }
 
 .thinking-text {
   margin: 0;
   max-width: 100%;
-  max-height: 96px;
+  max-height: 132px;
   box-sizing: border-box;
   padding: 6px 4px;
   overflow-y: auto;
@@ -1048,19 +1037,24 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 22px;
+  height: 26px;
   pointer-events: none;
   z-index: 1;
+  background: rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .thinking-fade-top {
   top: 0;
-  background: linear-gradient(180deg, #f3f5f8 0%, rgba(243, 245, 248, 0) 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0) 100%);
 }
 
 .thinking-fade-bottom {
   bottom: 0;
-  background: linear-gradient(0deg, #f3f5f8 0%, rgba(243, 245, 248, 0) 100%);
+  -webkit-mask-image: linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 100%);
 }
 
 .execution-row {

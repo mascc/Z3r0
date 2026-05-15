@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from datetime import datetime
-from sqlmodel import select
+from sqlmodel import select, update
 
 from database import get_async_session
 from logger import get_logger
@@ -212,17 +212,31 @@ async def _finish_async_job(
             return None
         if _coerce_status(job.status) in TERMINAL_ASYNC_JOB_STATUSES:
             return snapshot_from_job(job)
-        job.status = status.value
-        job.exit_code = exit_code
-        job.output_bytes = output_bytes
-        job.output_lines = output_lines
-        job.error = error
-        job.updated_at = now
-        job.finished_at = now
-        session.add(job)
+        updated = await session.exec(
+            update(SandboxAsyncJob)
+            .where(
+                SandboxAsyncJob.run_id == run_id,
+                SandboxAsyncJob.status == SandboxAsyncJobStatus.RUNNING.value,
+            )
+            .values(
+                status=status.value,
+                exit_code=exit_code,
+                output_bytes=output_bytes,
+                output_lines=output_lines,
+                error=error,
+                updated_at=now,
+                finished_at=now,
+            )
+        )
+        if updated.rowcount != 1:
+            await session.rollback()
+            current = await session.get(SandboxAsyncJob, run_id)
+            return snapshot_from_job(current) if current is not None else None
         await session.commit()
-        await session.refresh(job)
-        snapshot = snapshot_from_job(job)
+        current = await session.get(SandboxAsyncJob, run_id)
+        snapshot = snapshot_from_job(current) if current is not None else None
+        if snapshot is None:
+            return None
     await _notify_job_finished(run_id)
     return snapshot
 

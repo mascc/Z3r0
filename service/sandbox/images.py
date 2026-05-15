@@ -20,12 +20,13 @@ logger = get_logger(__name__)
 
 @dataclass
 class PullJob:
-    task: asyncio.Task[None]
     cancel_event: threading.Event
+    task: asyncio.Task[None] | None = None
     client: docker.DockerClient | None = None
 
 
 _pull_jobs: dict[int, PullJob] = {}
+_pull_jobs_lock = asyncio.Lock()
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,8 @@ def _cancel_pull_job(job: PullJob) -> None:
     """flip the cancel flag, cancel the task, and tear down the docker socket
     so a blocked pull stream unblocks immediately"""
     job.cancel_event.set()
-    job.task.cancel()
+    if job.task is not None:
+        job.task.cancel()
     if job.client is not None:
         job.client.close()
 
@@ -64,8 +66,9 @@ async def _save_pull_result(
         await session.commit()
 
 
-def _pull_image_sync(id: int, image_name: str) -> tuple[str, int]:
-    job = _pull_jobs[id]
+def _pull_image_sync(job: PullJob, image_name: str) -> tuple[str, int]:
+    if job.cancel_event.is_set():
+        raise asyncio.CancelledError
     client = docker.from_env()
     job.client = client
     try:
@@ -106,9 +109,9 @@ def _remove_image_sync(image_hash: str) -> None:
         client.close()
 
 
-async def _pull_and_update_sandbox_image(id: int, image_name: str) -> None:
+async def _pull_and_update_sandbox_image(id: int, image_name: str, job: PullJob) -> None:
     try:
-        image_hash, image_size = await asyncio.to_thread(_pull_image_sync, id, image_name)
+        image_hash, image_size = await asyncio.to_thread(_pull_image_sync, job, image_name)
         await _save_pull_result(id, SandboxImageStatus.READY, image_hash, image_size)
         logger.info("sandbox image pulled: %s", id)
     except asyncio.CancelledError:
@@ -118,19 +121,57 @@ async def _pull_and_update_sandbox_image(id: int, image_name: str) -> None:
         logger.exception("sandbox image pull failed: %s", id)
         await _save_pull_result(id, SandboxImageStatus.FAILED)
     finally:
-        current = _pull_jobs.get(id)
-        if current is not None and current.task is asyncio.current_task():
-            _pull_jobs.pop(id, None)
+        async with _pull_jobs_lock:
+            current = _pull_jobs.get(id)
+            if current is not None and current.task is asyncio.current_task():
+                _pull_jobs.pop(id, None)
 
 
-def _schedule_pull(id: int, image_name: str) -> None:
-    current = _pull_jobs.pop(id, None)
+async def _schedule_pull(id: int, image_name: str) -> None:
+    job = PullJob(cancel_event=threading.Event())
+    async with _pull_jobs_lock:
+        current = _pull_jobs.pop(id, None)
+        _pull_jobs[id] = job
     if current is not None:
         _cancel_pull_job(current)
 
-    cancel_event = threading.Event()
-    task = asyncio.create_task(_pull_and_update_sandbox_image(id, image_name))
-    _pull_jobs[id] = PullJob(task=task, cancel_event=cancel_event)
+    async with _pull_jobs_lock:
+        if _pull_jobs.get(id) is not job:
+            _cancel_pull_job(job)
+            return
+        task = asyncio.create_task(_pull_and_update_sandbox_image(id, image_name, job))
+        job.task = task
+        if _pull_jobs.get(id) is not job:
+            _cancel_pull_job(job)
+
+
+async def start_sandbox_image_runtime() -> None:
+    await _mark_stale_pulling_images_failed()
+
+
+async def stop_sandbox_image_runtime() -> None:
+    async with _pull_jobs_lock:
+        jobs = list(_pull_jobs.values())
+        _pull_jobs.clear()
+    for job in jobs:
+        _cancel_pull_job(job)
+    tasks = [job.task for job in jobs if job.task is not None]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _mark_stale_pulling_images_failed() -> None:
+    async with get_async_session() as session:
+        rows = (await session.exec(
+            select(SandboxImage).where(SandboxImage.status == SandboxImageStatus.PULLING)
+        )).all()
+        for sandbox_image in rows:
+            sandbox_image.status = SandboxImageStatus.FAILED
+            sandbox_image.updated_at = datetime.now()
+            session.add(sandbox_image)
+        if rows:
+            await session.commit()
+            logger.info("stale sandbox image pulls marked failed: %d", len(rows))
 
 
 async def create_sandbox_image(image_name: str) -> SandboxImage:
@@ -153,7 +194,7 @@ async def create_sandbox_image(image_name: str) -> SandboxImage:
     if sandbox_image.id is None:
         raise RuntimeError("sandbox image id was not generated")
 
-    _schedule_pull(sandbox_image.id, image_name)
+    await _schedule_pull(sandbox_image.id, image_name)
     logger.info("sandbox image created: %s", sandbox_image.id)
     return sandbox_image
 
@@ -173,7 +214,8 @@ async def cancel_sandbox_image_pull(id: int) -> tuple[SandboxImage | None, bool]
         await session.commit()
         await session.refresh(sandbox_image)
 
-    job = _pull_jobs.get(id)
+    async with _pull_jobs_lock:
+        job = _pull_jobs.get(id)
     if job is not None:
         _cancel_pull_job(job)
 
@@ -183,7 +225,8 @@ async def cancel_sandbox_image_pull(id: int) -> tuple[SandboxImage | None, bool]
 
 async def delete_sandbox_image(id: int) -> DeleteSandboxImageResult:
     """delete sandbox image"""
-    job = _pull_jobs.pop(id, None)
+    async with _pull_jobs_lock:
+        job = _pull_jobs.pop(id, None)
     if job is not None:
         _cancel_pull_job(job)
 
@@ -225,7 +268,7 @@ async def retry_sandbox_image(id: int) -> tuple[SandboxImage | None, bool]:
         await session.commit()
         await session.refresh(sandbox_image)
 
-    _schedule_pull(id, sandbox_image.image_name)
+    await _schedule_pull(id, sandbox_image.image_name)
     logger.debug("sandbox image pull retried: %s", sandbox_image.id)
     return sandbox_image, True
 

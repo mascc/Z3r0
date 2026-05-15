@@ -255,6 +255,8 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
       if (socketsRef.current.get(sessionId) !== socket) return;
       socketsRef.current.delete(sessionId);
       clearIdleTimer(sessionId);
+      socket.removeEventListener("close", onTerminate);
+      socket.removeEventListener("error", onTerminate);
       updateRuntime(sessionId, (r) => ({
         ...r,
         status: "closed",
@@ -446,13 +448,14 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
       const response = await createAgentSession();
       const id = response.data?.session_id ?? null;
       if (!id) return;
+      initRuntime(id);
       pendingSendRef.current = { sessionId: id, text, sandboxContainerId, agentCode };
       manualBlankSessionRef.current = false;
       setActiveSessionId(id);
     } catch (error) {
       showApiError(error);
     }
-  }, [activeAgentCode, activeSessionId, sendCommand, updateRuntime]);
+  }, [activeAgentCode, activeSessionId, initRuntime, sendCommand]);
 
   const interrupt = useCallback(async () => {
     if (!activeSessionId) return;
@@ -538,7 +541,19 @@ function bufferLiveEvent(
 }
 
 function waitOpen(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) return Promise.resolve();
+  if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+    return Promise.reject(new Error("websocket connection closed"));
+  }
   return new Promise((resolve, reject) => {
+    if (socket.readyState === WebSocket.OPEN) {
+      resolve();
+      return;
+    }
+    if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      reject(new Error("websocket connection closed"));
+      return;
+    }
     const cleanup = () => {
       window.clearTimeout(timer);
       socket.removeEventListener("open", onOpen);

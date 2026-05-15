@@ -25,6 +25,7 @@ class _AsyncCommandJob:
 
 
 _jobs: dict[str, _AsyncCommandJob] = {}
+_jobs_lock = asyncio.Lock()
 _AsyncCommandJobPredicate = Callable[[str, _AsyncCommandJob], bool]
 
 
@@ -32,7 +33,7 @@ async def start_async_sandbox_runtime() -> None:
     await sandbox_async_jobs.mark_stale_running_async_jobs_failed()
 
 
-def start_async_sandbox_command(
+async def start_async_sandbox_command(
     *,
     run_id: str,
     context: AgentRuntimeContext,
@@ -40,22 +41,23 @@ def start_async_sandbox_command(
     stat_command: str,
     timeout_seconds: int,
 ) -> None:
-    task = asyncio.create_task(
-        _run_async_sandbox_command(
-            run_id=run_id,
-            context=context,
-            wrapped_command=wrapped_command,
-            stat_command=stat_command,
-            timeout_seconds=timeout_seconds,
-        ),
-        name=f"sandbox-async-command-{run_id}",
-    )
-    _jobs[run_id] = _AsyncCommandJob(
-        task=task,
-        session_id=context.session_id,
-        agent_instance_id=context.agent_instance_id,
-        sandbox_container_id=context.sandbox_container_id,
-    )
+    async with _jobs_lock:
+        task = asyncio.create_task(
+            _run_async_sandbox_command(
+                run_id=run_id,
+                context=context,
+                wrapped_command=wrapped_command,
+                stat_command=stat_command,
+                timeout_seconds=timeout_seconds,
+            ),
+            name=f"sandbox-async-command-{run_id}",
+        )
+        _jobs[run_id] = _AsyncCommandJob(
+            task=task,
+            session_id=context.session_id,
+            agent_instance_id=context.agent_instance_id,
+            sandbox_container_id=context.sandbox_container_id,
+        )
     task.add_done_callback(lambda completed: _finish_async_sandbox_command(run_id, completed))
 
 
@@ -105,14 +107,15 @@ async def stop_async_sandbox_commands() -> None:
 
 
 async def _cancel_runtime_jobs(predicate: _AsyncCommandJobPredicate) -> bool:
-    tasks: list[asyncio.Task[None]] = []
-    for run_id, job in list(_jobs.items()):
-        if not predicate(run_id, job):
-            continue
-        _jobs.pop(run_id, None)
-        if not job.task.done():
-            job.task.cancel()
-        tasks.append(job.task)
+    async with _jobs_lock:
+        tasks: list[asyncio.Task[None]] = []
+        for run_id, job in list(_jobs.items()):
+            if not predicate(run_id, job):
+                continue
+            _jobs.pop(run_id, None)
+            if not job.task.done():
+                job.task.cancel()
+            tasks.append(job.task)
     if not tasks:
         return False
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -150,6 +153,11 @@ async def _run_async_sandbox_command(
     except Exception as exc:
         logger.exception("async sandbox command execution failed: %s", run_id)
         await sandbox_async_jobs.fail_async_job(run_id, str(exc) or "Sandbox async job failed.")
+    finally:
+        async with _jobs_lock:
+            current = _jobs.get(run_id)
+            if current is not None and current.task is asyncio.current_task():
+                _jobs.pop(run_id, None)
 
 
 async def _stat_output_file(container_id: int, stat_command: str) -> tuple[int, int]:
@@ -172,7 +180,6 @@ async def _stat_output_file(container_id: int, stat_command: str) -> tuple[int, 
 
 
 def _finish_async_sandbox_command(run_id: str, task: asyncio.Task[None]) -> None:
-    _jobs.pop(run_id, None)
     try:
         task.result()
     except asyncio.CancelledError:
