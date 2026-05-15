@@ -61,7 +61,7 @@ export function LoginPage() {
               value={email}
               onChange={setEmail}
               autoComplete="email"
-              placeholder="admin@z3r0.fans"
+              placeholder="<your email>"
               required
             />
           </label>
@@ -74,7 +74,7 @@ export function LoginPage() {
               value={password}
               onChange={setPassword}
               autoComplete="current-password"
-              placeholder="123456"
+              placeholder="<your password>"
               required
             />
           </label>
