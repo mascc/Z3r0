@@ -1,6 +1,6 @@
-ARG AGENT_BROWSER_VERSION=0.3.2
-ARG GHIDRA_VERSION=12.0.4
-ARG GHIDRA_BUILD=20260303
+ARG AGENT_BROWSER_VERSION=0.3.4
+ARG GHIDRA_VERSION=12.1
+ARG GHIDRA_BUILD=20260513
 ARG JADX_VERSION=1.5.5
 
 # Build the small HTTP/WebSocket proxy used by the sandbox runtime.
@@ -14,17 +14,20 @@ RUN go build -trimpath -ldflags='-s -w' -o /sandbox-proxy .
 
 FROM ghcr.io/astral-sh/uv:latest AS uv-bin
 
-# Download and normalize the browser extension. The CLI itself is installed
-# in the final image so npm can create the correct global binary layout.
-FROM debian:trixie-slim AS agent-browser-extension
+# Download and normalize agent-browser assets.
+FROM debian:trixie-slim AS agent-browser-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG AGENT_BROWSER_VERSION
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl unzip; \
-    mkdir -p /opt/agent-browser/chrome-extension /tmp/agent-browser-extensions; \
+    apt-get install -y --no-install-recommends ca-certificates curl tar unzip; \
+    mkdir -p \
+      /opt/agent-browser/bin \
+      /opt/agent-browser/chrome-extension \
+      /tmp/agent-browser-cli \
+      /tmp/agent-browser-extensions; \
     curl -fsSL "https://github.com/sleepinginsummer/agent-browser-cli/releases/download/v${AGENT_BROWSER_VERSION}/chrome-extensions.zip" -o /tmp/chrome-extensions.zip; \
     unzip -q /tmp/chrome-extensions.zip -d /tmp/agent-browser-extensions; \
     extension_dir="$(find /tmp/agent-browser-extensions -type f -name manifest.json -printf '%h\n' | sort | head -n 1)"; \
@@ -32,6 +35,11 @@ RUN set -eux; \
     echo "agent-browser extension dir: $extension_dir"; \
     cp -a "$extension_dir"/. /opt/agent-browser/chrome-extension; \
     test -f /opt/agent-browser/chrome-extension/manifest.json; \
+    curl -fsSL "https://github.com/sleepinginsummer/agent-browser-cli/releases/download/v${AGENT_BROWSER_VERSION}/sleepinsummer-agent-browser-cli-linux-x64-${AGENT_BROWSER_VERSION}.tgz" -o /tmp/agent-browser-cli.tgz; \
+    tar -xzf /tmp/agent-browser-cli.tgz -C /tmp/agent-browser-cli; \
+    cp /tmp/agent-browser-cli/package/bin/agent-browser-cli /opt/agent-browser/bin/agent-browser-cli; \
+    chmod 755 /opt/agent-browser/bin/agent-browser-cli; \
+    /opt/agent-browser/bin/agent-browser-cli --help >/dev/null; \
     find /opt/agent-browser/chrome-extension -type f \( \
       -name '*.md' -o \
       -name '*.map' \
@@ -97,8 +105,6 @@ RUN set -eux; \
 # Final sandbox runtime image.
 FROM debian:trixie-slim
 
-ARG AGENT_BROWSER_VERSION
-
 ENV HOME=/root \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -151,11 +157,11 @@ RUN set -eux; \
       xvfb; \
     ln -sf vnc.html /usr/share/novnc/index.html; \
     mkdir -p /data; \
-    rm -rf /root/.npm /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
 
 COPY --from=uv-bin /uv /usr/local/bin/uv
 COPY --from=uv-bin /uvx /usr/local/bin/uvx
-COPY --from=agent-browser-extension /opt/agent-browser/chrome-extension /opt/agent-browser/chrome-extension
+COPY --from=agent-browser-builder /opt/agent-browser /opt/agent-browser
 COPY --from=ghidra-builder /opt/ghidra /opt/ghidra
 COPY --from=jadx-builder /opt/jadx /opt/jadx
 
@@ -163,36 +169,33 @@ RUN set -eux; \
     ln -sf /opt/ghidra/ghidraRun /usr/local/bin/ghidra; \
     ln -sf /opt/ghidra/support/analyzeHeadless /usr/local/bin/analyzeHeadless; \
     ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx; \
-    npm install -g --omit=dev --no-audit --no-fund "@sleepinsummer/agent-browser-cli@${AGENT_BROWSER_VERSION}"; \
+    ln -sf /opt/agent-browser/bin/agent-browser-cli /usr/local/bin/agent-browser-cli; \
     uv tool install --python /usr/bin/python3 sqlmap; \
     uv cache clean; \
-    npm_root="$(npm root -g)"; \
-    find "$npm_root" -type d \( \
-      -name test -o \
-      -name tests -o \
-      -name __tests__ -o \
-      -name docs -o \
-      -name examples \
-    \) -prune -exec rm -rf '{}' +; \
-    find "$npm_root" -type f \( \
-      -name '*.md' -o \
-      -name '*.map' -o \
-      -name 'CHANGELOG*' \
-    \) -delete; \
-    npm cache clean --force; \
     find /opt/uv/tools -type d -name __pycache__ -prune -exec rm -rf '{}' +; \
-    rm -rf /root/.cache /root/.npm /tmp/* /var/tmp/*
+    rm -rf /root/.cache /tmp/* /var/tmp/*
 
 RUN set -eux; \
+    7z i >/dev/null; \
+    g++ --version; \
+    gcc --version; \
     java -version; \
     jadx --version; \
     nmap --version; \
+    node --version; \
+    npm --version; \
+    pip3 --version; \
+    pkg-config --version; \
+    python3 --version; \
     sqlmap --version; \
+    supervisord --version; \
     unzip -v >/dev/null; \
+    x11vnc -version; \
     chromium --version; \
     agent-browser-cli --help >/dev/null; \
-    command -v nc; \
+    command -v websockify; \
     test -f /opt/agent-browser/chrome-extension/manifest.json; \
+    test -x /opt/agent-browser/bin/agent-browser-cli; \
     test -x /opt/ghidra/ghidraRun; \
     test -x /opt/ghidra/support/analyzeHeadless; \
     test -x /opt/jadx/bin/jadx
