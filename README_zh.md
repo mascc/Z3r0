@@ -198,6 +198,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 Z3r0 面向合法授权的安全测试、代码审计、红队演练和研究教学场景。沙箱容器、Docker socket、终端、文件管理器和模型密钥均属于高权限资产，应仅在可信、隔离的环境中使用。
 
+## 致谢
+
+感谢[Linux.do](https://linux.do/)站点及其社区为项目开发和交流提供支持。
+
 ## License
 
 本项目基于 [MIT License](LICENSE) 开源。

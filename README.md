@@ -198,6 +198,10 @@ Open `http://127.0.0.1:8000`.
 
 Z3r0 is intended for authorized security testing, code auditing, red team exercises, and research or training environments. Sandbox containers, the Docker socket, terminal access, file management, and model credentials are high-privilege assets and should be used only in trusted, isolated environments.
 
+## Acknowledgments
+
+Thanks to the [Linux.do](https://linux.do/) website and its community for their support in project development and communication.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
