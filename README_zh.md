@@ -78,10 +78,10 @@ flowchart TB
   CSO --> CRE["cre / J4m3<br/>Reverse"]
   CSO --> CCE["cce / Nu1L<br/>Cryptography"]
 
-  CIE --> K1["Knowledge Tools"]
-  CPE --> S1["Sandbox Tools"]
-  CRE --> S2["Sandbox Tools"]
-  CCE --> S3["Sandbox Tools"]
+  CIE --> K1["Knowledge and Sandbox Tools"]
+  CPE --> S1["Knowledge and Sandbox Tools"]
+  CRE --> S2["Knowledge and Sandbox Tools"]
+  CCE --> S3["Knowledge and Sandbox Tools"]
 ```
 
 Agent 能力按会话动态装配。`AgentRegistry` 基于配置、角色规格、知识生成结果和当前沙箱绑定创建会话级 Agent Graph；只有当会话绑定了已授权且运行中的沙箱时，命令类工具才会挂载。

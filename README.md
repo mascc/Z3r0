@@ -78,10 +78,10 @@ flowchart TB
   CSO --> CRE["cre / J4m3<br/>Reverse"]
   CSO --> CCE["cce / Nu1L<br/>Cryptography"]
 
-  CIE --> K1["Knowledge Tools"]
-  CPE --> S1["Sandbox Tools"]
-  CRE --> S2["Sandbox Tools"]
-  CCE --> S3["Sandbox Tools"]
+  CIE --> K1["Knowledge and Sandbox Tools"]
+  CPE --> S1["Knowledge and Sandbox Tools"]
+  CRE --> S2["Knowledge and Sandbox Tools"]
+  CCE --> S3["Knowledge and Sandbox Tools"]
 ```
 
 Agent capabilities are assembled per session. `AgentRegistry` uses configuration, role specifications, knowledge generation, and the current sandbox binding to create a session-level agent graph. Command tools are mounted only when an authorized, running sandbox is bound to the session.
