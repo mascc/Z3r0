@@ -1,19 +1,19 @@
 export const landingSeo = {
   siteUrl: "https://z3r0.fans/",
   siteName: "Z3r0",
-  title: "Z3r0 - Multi-Agent Security Workbench for Red Team, Code Audit, and Research",
+  title: "Z3r0 - Multi-Agent Security Workbench for Authorized Assessment, Code Audit, and Controlled Research",
   description:
-    "Z3r0 is a controlled multi-agent security workbench for authorized red team operations, code auditing, vulnerability validation, reverse engineering, cryptography review, and security research.",
+    "Z3r0 is a controlled multi-agent security workbench for authorized security assessment, code auditing, internal review, reverse engineering review, cryptography review, and controlled research.",
   imagePath: "assets/z3r0-logo.png",
   imageAlt: "Z3r0 logo",
   keywords: [
     "Z3r0",
     "multi-agent security workbench",
     "AI security agent platform",
-    "authorized red team operations",
+    "authorized security assessment",
     "code audit automation",
     "vulnerability validation",
-    "Docker sandbox security testing",
+    "Docker sandbox assessment",
     "security research workbench",
     "agent orchestration",
     "reverse engineering automation",
@@ -48,7 +48,7 @@ export const structuredData = [
         name: "What is Z3r0?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Z3r0 is a controlled multi-agent security workbench for authorized red team operations, code auditing, vulnerability validation, and security research.",
+          text: "Z3r0 is a controlled multi-agent security workbench for authorized security assessment, code auditing, internal review, validation, and controlled research.",
         },
       },
       {
@@ -56,7 +56,7 @@ export const structuredData = [
         name: "Who is Z3r0 designed for?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Z3r0 is designed for security operators, internal assessment teams, code auditors, red teamers, reverse engineers, cryptography reviewers, and controlled research or training environments.",
+          text: "Z3r0 is designed for authorized users, internal assessment teams, code auditors, reverse engineers, cryptography reviewers, and controlled research or training environments.",
         },
       },
       {
@@ -64,7 +64,7 @@ export const structuredData = [
         name: "How does Z3r0 run security tooling?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Z3r0 binds agent tools and manual operator takeover to controlled Docker sandbox containers with shell, file, browser, noVNC, and security tooling access.",
+          text: "Z3r0 binds agent tools and manual review to controlled Docker sandbox containers with shell, file, browser, noVNC, and security review tooling access.",
         },
       },
       {
@@ -72,7 +72,7 @@ export const structuredData = [
         name: "What environments should use Z3r0?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Z3r0 should be used only in authorized, trusted, and isolated environments where Docker access, model credentials, terminal access, and sandbox containers can be governed as high-privilege assets.",
+          text: "Z3r0 should be used only within lawful and explicitly authorized, trusted, and isolated environments where Docker access, model credentials, terminal access, and sandbox containers can be governed as high-privilege assets.",
         },
       },
     ],

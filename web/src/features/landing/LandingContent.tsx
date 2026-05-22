@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertTriangle,
   Bot,
   Box,
   Braces,
@@ -49,13 +50,13 @@ type ArchitectureNode = {
 const architectureNodes: ArchitectureNode[] = [
   {
     id: "operator",
-    label: "Security Operator",
+    label: "Authorized Operator",
     role: "Authorized Entry",
     detail: "The operator defines the assessment objective, authorization boundary, sandbox context, and review expectations.",
     points: [
-      "Starts authorized red team, audit, validation, or research work from the browser.",
+      "Starts authorized assessment, audit, validation, or research work from the browser.",
       "Reviews streamed reasoning, evidence, tool output, and final assessment records.",
-      "Can manually take over shell, screen, and files when evidence needs human verification.",
+      "Can manually review shell, screen, and files when evidence needs human verification.",
     ],
     icon: Fingerprint,
   },
@@ -63,7 +64,7 @@ const architectureNodes: ArchitectureNode[] = [
     id: "workbench",
     label: "React Workbench",
     role: "Presentation Layer",
-    detail: "The workbench is the operator-facing surface for sessions, resource management, event streams, and sandbox takeover.",
+    detail: "The workbench is the user-facing surface for sessions, resource management, event streams, and sandbox review.",
     points: [
       "Renders normalized thinking, text, tool, and subagent events in real time.",
       "Provides session lists, agent selection, sandbox binding, shell, files, and noVNC views.",
@@ -114,7 +115,7 @@ const architectureNodes: ArchitectureNode[] = [
     detail: "The persisted record connects conclusions to streamed events, tool evidence, subagent output, and durable facts.",
     points: [
       "Keeps messages, metadata, delegated jobs, notifications, and stable facts reviewable.",
-      "Supports resumed investigations and post-engagement review.",
+      "Supports resumed reviews and post-assessment review.",
       "Helps operators distinguish confirmed findings, assumptions, residual risk, and next actions.",
     ],
     icon: FileCheck2,
@@ -123,10 +124,10 @@ const architectureNodes: ArchitectureNode[] = [
     id: "sandbox",
     label: "Docker Sandbox",
     role: "Execution Layer",
-    detail: "Sandbox containers provide the controlled execution boundary for agent tools and manual operator takeover.",
+    detail: "Sandbox containers provide the controlled execution boundary for agent tools and manual user review.",
     points: [
       "Runs commands, skills, shell sessions, browser workflows, file operations, and noVNC access.",
-      "Returns structured command results to agents while preserving an operator review path.",
+      "Returns structured command results to agents while preserving a user review path.",
       "Invalidates tool bindings when container state changes.",
     ],
     icon: Box,
@@ -201,7 +202,7 @@ const agents = [
     name: "L1ly",
     role: "Chief Intelligence Engineer",
     capability: "Intelligence",
-    direction: "Target profiling and asset relationship analysis",
+    direction: "Authorized asset context and relationship analysis",
     detail: "Intelligence collection, asset mapping, and relationship analysis.",
     accent: "cyan",
     icon: FileSearch,
@@ -211,7 +212,7 @@ const agents = [
     name: "Fr4nk",
     role: "Chief Penetration Engineer",
     capability: "Validation",
-    direction: "Controlled exploitability checks and risk verification",
+    direction: "Authorized validation and risk verification",
     detail: "Penetration testing, vulnerability validation, and risk verification.",
     accent: "red",
     icon: ShieldCheck,
@@ -276,8 +277,8 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
             <div>
               <h1>Z3r0 Multi-Agent Security Workbench</h1>
               <p>
-                A controlled multi-agent workbench for enterprise red team operations,
-                authorized security assessments, code auditing, and security research.
+                A controlled multi-agent workbench for authorized security assessments,
+                code auditing, internal review, and controlled research.
               </p>
             </div>
           </div>
@@ -301,6 +302,20 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
               Coordinator-led work with
               <span>specialist execution and review paths.</span>
             </strong>
+          </div>
+          <div className="landing-capability-disclaimer">
+            <div className="landing-boundary-heading">
+              <AlertTriangle size={18} />
+              <h3>Authorized use only</h3>
+            </div>
+            <p>
+              Use this project only within a lawful and explicitly authorized scope. It does not grant
+              permission to test, access, scan, or affect any third-party system, network, service, account,
+              or data. Unauthorized, unlawful, or harmful use is prohibited. Users are responsible for
+              preserving authorization, defining scope, and complying with applicable laws, contracts, and
+              authorization boundaries. The author is not responsible for any consequence, loss, damage,
+              legal liability, or unlawful act caused by users.
+            </p>
           </div>
           <div className="landing-capability-grid">
             {agents.map((agent) => {
@@ -327,7 +342,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
         <div className="landing-section-heading">
           <span className="page-eyebrow">Architecture</span>
           <h2 id="architecture-title">Layered architecture for governed agent operations.</h2>
-          <p>Z3r0 separates the operator surface, API boundary, runtime orchestration, session agent graph, controlled execution, model access, streaming protocol, and persisted assessment record.</p>
+          <p>Z3r0 separates the user-facing surface, API boundary, runtime orchestration, session agent graph, controlled execution, model access, streaming protocol, and persisted assessment record.</p>
         </div>
 
         <div className="landing-architecture-layout">
@@ -413,7 +428,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
       <section id="runtime" className="landing-section landing-runtime" aria-labelledby="runtime-title">
         <div className="landing-section-heading">
           <span className="page-eyebrow">Runtime Flow</span>
-          <h2 id="runtime-title">Streaming sessions remain replayable, cancellable, and maintainable during long investigations.</h2>
+          <h2 id="runtime-title">Streaming sessions remain replayable, cancellable, and maintainable during long reviews.</h2>
         </div>
 
         <div className="landing-runtime-track">
@@ -434,8 +449,8 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
         <div className="landing-sandbox-panel">
           <div>
             <span className="page-eyebrow">Sandbox Tooling</span>
-            <h3>Agent tools and operator takeover share the same controlled execution boundary.</h3>
-            <p>Agents receive structured command results while operators can open shell, screen, and file manager views for validation and review.</p>
+            <h3>Agent tools and manual review share the same controlled execution boundary.</h3>
+            <p>Agents receive structured command results while users can open shell, screen, and file manager views for validation and review within an authorized scope.</p>
           </div>
           <div className="landing-tool-cloud">
             {sandboxTools.map((tool) => <span key={tool}>{tool}</span>)}
@@ -473,9 +488,11 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
             <h3>Trusted deployment required</h3>
           </div>
           <p>
-            Z3r0 is intended for authorized testing, code auditing, red team exercises,
-            research, and training environments. Network access, sandbox containers,
-            terminal access, file management, and model credentials should remain isolated and trusted.
+            Z3r0 is intended for authorized security assessment, code auditing,
+            internal review, controlled research, and training environments. Network access,
+            sandbox containers, terminal access, file management, and model
+            credentials should remain isolated and trusted. Users must define and
+            follow an explicit authorization scope before using any tool capability.
           </p>
         </div>
       </section>
