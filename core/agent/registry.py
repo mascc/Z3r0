@@ -12,7 +12,7 @@ from core.agent.instructions import build_instructions
 from core.agent.specs import AGENT_SPECS, AgentSpec
 from core.delegation.subagents import build_subagent_tools
 from core.runtime.context import AgentRuntimeContext
-from core.tools.knowledge import load_knowledge
+from core.tools.knowledge import find_knowledge, load_knowledge
 from core.tools.sandbox import (
     execute_async_command,
     execute_sync_command,
@@ -83,7 +83,7 @@ class AgentRegistry:
             has_sandbox_container=graph.tool_snapshot.sandbox_container_id is not None,
             include_sandbox_commands=_has_tool(spec, execute_sync_command) or _has_tool(spec, execute_async_command),
             include_sandbox_skills=_has_tool(spec, load_skill),
-            include_agent_knowledges=_has_tool(spec, load_knowledge),
+            include_agent_knowledges=_has_any_tool(spec, (find_knowledge, load_knowledge)),
         )
 
         tools: list[Tool] = [
@@ -158,6 +158,10 @@ class SessionAgentGraph:
 
 def _has_tool(spec: AgentSpec, tool: Tool) -> bool:
     return any(mount.tool is tool for mount in spec.tools)
+
+
+def _has_any_tool(spec: AgentSpec, tools: tuple[Tool, ...]) -> bool:
+    return any(_has_tool(spec, tool) for tool in tools)
 
 
 def _build_subagent_tools(spec: AgentSpec, graph: SessionAgentGraph) -> list[Tool]:

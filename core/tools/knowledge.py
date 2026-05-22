@@ -4,7 +4,9 @@ import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
+import regex
 import yaml
 from agents import RunContextWrapper, function_tool
 
@@ -18,6 +20,12 @@ KNOWLEDGES_DIR_NAME = "knowledges"
 KNOWLEDGE_EXTENSION = ".md"
 _MAX_DESCRIPTION_LENGTH = 512
 _MAX_CONTENT_LENGTH = 200_000
+_MAX_FIND_KEYWORD_LENGTH = 200
+_DEFAULT_FIND_MAX_MATCHES = 50
+_MAX_FIND_MAX_MATCHES = 200
+_DEFAULT_FIND_CONTEXT_LINES = 0
+_MAX_FIND_CONTEXT_LINES = 5
+_REGEX_SEARCH_TIMEOUT_SECONDS = 0.05
 _knowledge_locks: dict[str, asyncio.Lock] = {}
 _knowledge_generation = 0
 
@@ -153,6 +161,40 @@ async def load_knowledge(
 
 
 @function_tool
+async def find_knowledge(
+    ctx: RunContextWrapper[AgentRuntimeContext],
+    keyword: str,
+    use_regex: bool = False,
+    case_sensitive: bool = False,
+    context_lines: int = _DEFAULT_FIND_CONTEXT_LINES,
+    max_matches: int = _DEFAULT_FIND_MAX_MATCHES,
+) -> str:
+    """Search all knowledge bodies owned by the current agent for a keyword or regex.
+
+    Args:
+        keyword: Literal keyword or regular expression to search for across all current-agent knowledge bodies.
+        use_regex: Whether keyword should be interpreted as a Python regular expression.
+        case_sensitive: Whether matching should be case-sensitive.
+        context_lines: Number of surrounding body lines to include before and after each match.
+        max_matches: Maximum number of matching lines to return across all knowledge files.
+
+    Returns:
+        JSON status with grep-like knowledge name, body line numbers, and matching context.
+    """
+    try:
+        agent_code = _valid_agent_code(ctx)
+        needle = _valid_find_keyword(keyword)
+        context = _valid_context_lines(context_lines)
+        limit = _valid_max_matches(max_matches)
+        matcher = _build_knowledge_matcher(needle, use_regex, case_sensitive)
+        matches = _find_knowledge_matches(agent_code, matcher, context, limit)
+    except Exception as exc:
+        return _tool_error(ToolResultTypeSchema.KNOWLEDGE_DETAIL, str(exc) or "Knowledge search failed.")
+
+    return _tool_success(ToolResultTypeSchema.KNOWLEDGE_DETAIL, _format_knowledge_matches(matches))
+
+
+@function_tool
 async def update_knowledge(
     ctx: RunContextWrapper[AgentRuntimeContext],
     target_name: str,
@@ -233,12 +275,21 @@ def load_knowledge_metadata(agent_code: str) -> tuple[str, ...]:
         if not _is_safe_knowledge_path(agent_code, knowledge_file):
             continue
         try:
-            front_matter = _front_matter_from_text(knowledge_file.read_text(encoding="utf-8"))
-        except OSError:
+            text = knowledge_file.read_text(encoding="utf-8")
+            front_matter, body = _split_front_matter(text)
+            metadata = yaml.safe_load(front_matter) if front_matter else None
+        except (OSError, ValueError, yaml.YAMLError):
             continue
-        if front_matter is None:
+        if not isinstance(metadata, dict):
             continue
-        blocks.append(f"## {knowledge_name}\n\n```yaml\n{front_matter}\n```")
+        metadata["body_line_count"] = len(body.split("\n")) if body else 0
+        metadata = yaml.safe_dump(
+            metadata,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ).strip()
+        blocks.append(f"## {knowledge_name}\n\n```yaml\n{metadata}\n```")
     return tuple(blocks)
 
 
@@ -270,6 +321,33 @@ def _valid_content(content: str | None) -> str:
     if len(value) > _MAX_CONTENT_LENGTH:
         raise ValueError(f"Knowledge content must be at most {_MAX_CONTENT_LENGTH} characters.")
     return value
+
+
+def _valid_find_keyword(keyword: str | None) -> str:
+    value = keyword or ""
+    if not value.strip():
+        raise ValueError("Knowledge search keyword is required.")
+    if "\n" in value or "\r" in value:
+        raise ValueError("Knowledge search keyword must be a single line.")
+    if len(value) > _MAX_FIND_KEYWORD_LENGTH:
+        raise ValueError(f"Knowledge search keyword must be at most {_MAX_FIND_KEYWORD_LENGTH} characters.")
+    return value
+
+
+def _valid_context_lines(context_lines: int) -> int:
+    if not isinstance(context_lines, int):
+        raise ValueError("context_lines must be an integer.")
+    if context_lines < 0 or context_lines > _MAX_FIND_CONTEXT_LINES:
+        raise ValueError(f"context_lines must be between 0 and {_MAX_FIND_CONTEXT_LINES}.")
+    return context_lines
+
+
+def _valid_max_matches(max_matches: int) -> int:
+    if not isinstance(max_matches, int):
+        raise ValueError("max_matches must be an integer.")
+    if max_matches < 1 or max_matches > _MAX_FIND_MAX_MATCHES:
+        raise ValueError(f"max_matches must be between 1 and {_MAX_FIND_MAX_MATCHES}.")
+    return max_matches
 
 
 def _existing_knowledge_path(agent_code: str, knowledge_name: str) -> Path:
@@ -323,6 +401,86 @@ def _format_numbered_lines(first_line: int, lines: list[str]) -> str:
     if not lines:
         return ""
     return "\n".join(f"{line_number} | {line}" for line_number, line in enumerate(lines, start=first_line))
+
+
+def _build_knowledge_matcher(keyword: str, use_regex: bool, case_sensitive: bool) -> Callable[[str], bool]:
+    if use_regex:
+        flags = 0 if case_sensitive else regex.IGNORECASE
+        try:
+            pattern = regex.compile(keyword, flags)
+        except regex.error as exc:
+            raise ValueError(f"Knowledge search regex is invalid: {exc}") from exc
+
+        def regex_match(line: str) -> bool:
+            try:
+                return pattern.search(line, timeout=_REGEX_SEARCH_TIMEOUT_SECONDS) is not None
+            except TimeoutError as exc:
+                raise ValueError("Knowledge search regex timed out.") from exc
+
+        return regex_match
+
+    needle = keyword if case_sensitive else keyword.casefold()
+
+    def literal_match(line: str) -> bool:
+        haystack = line if case_sensitive else line.casefold()
+        return needle in haystack
+
+    return literal_match
+
+
+def _find_knowledge_matches(
+    agent_code: str,
+    matcher: Callable[[str], bool],
+    context_lines: int,
+    max_matches: int,
+) -> list[tuple[str, int, list[tuple[int, str, bool]]]]:
+    knowledges_dir = _agent_knowledges_dir(agent_code)
+    if not knowledges_dir.is_dir():
+        return []
+
+    matches: list[tuple[str, int, list[tuple[int, str, bool]]]] = []
+    matched_lines = 0
+    knowledge_files = sorted(knowledges_dir.glob(f"*{KNOWLEDGE_EXTENSION}"), key=lambda path: path.stem)
+    for knowledge_file in knowledge_files:
+        knowledge_name = knowledge_file.stem
+        if not _KNOWLEDGE_NAME_PATTERN.fullmatch(knowledge_name):
+            continue
+        if not _is_safe_knowledge_path(agent_code, knowledge_file):
+            continue
+        try:
+            doc = KnowledgeDocument.parse(knowledge_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+
+        lines = doc.body_lines()
+        for line_index, line in enumerate(lines, start=1):
+            if not matcher(line):
+                continue
+            start = max(1, line_index - context_lines)
+            end = min(len(lines), line_index + context_lines)
+            context = [
+                (number, lines[number - 1], number == line_index)
+                for number in range(start, end + 1)
+            ]
+            matches.append((knowledge_name, line_index, context))
+            matched_lines += 1
+            if matched_lines >= max_matches:
+                return matches
+    return matches
+
+
+def _format_knowledge_matches(matches: list[tuple[str, int, list[tuple[int, str, bool]]]]) -> str:
+    if not matches:
+        return "No matching knowledge lines found."
+
+    blocks: list[str] = []
+    for knowledge_name, matched_line, context in matches:
+        lines = [f"## {knowledge_name}:{matched_line}"]
+        for line_number, line, is_match in context:
+            marker = ">" if is_match else " "
+            lines.append(f"{marker} {line_number} | {line}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def _split_front_matter(text: str) -> tuple[str, str]:
@@ -395,13 +553,3 @@ def _is_safe_knowledge_path(agent_code: str, path: Path) -> bool:
         return path.resolve().is_relative_to(_agent_knowledges_dir(agent_code).resolve())
     except OSError:
         return False
-
-
-def _front_matter_from_text(text: str) -> str | None:
-    lines = text.splitlines()
-    if not lines or lines[0] != "---":
-        return None
-    for index, line in enumerate(lines[1:], start=1):
-        if line == "---":
-            return "\n".join(lines[:index + 1]).strip()
-    return None

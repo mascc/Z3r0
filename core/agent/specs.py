@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from agents import Tool
 
-from core.tools.knowledge import create_knowledge, load_knowledge, update_knowledge
+from core.tools.knowledge import create_knowledge, find_knowledge, load_knowledge, update_knowledge
 from core.tools.sandbox import (
     cancel_sandbox_async_job,
     execute_async_command,
@@ -31,6 +31,7 @@ class AgentSpec:
 
 
 KNOWLEDGE_TOOLS = (
+    ToolMount(find_knowledge),
     ToolMount(load_knowledge),
     ToolMount(create_knowledge),
     ToolMount(update_knowledge),

@@ -52,7 +52,9 @@ def _build_agent_knowledge_instructions(knowledge_metadata: tuple[str, ...]) -> 
 
     return (
         "# Knowledges\n\n"
-        "Available metadata only; read body before use or edit.\n\n"
+        "Available metadata only; each item includes body_line_count. "
+        "Use `find_knowledge` to locate relevant body lines by keyword, "
+        "then `load_knowledge` with line ranges before use or edit.\n\n"
         + "\n\n".join(knowledge_metadata)
     )
 
