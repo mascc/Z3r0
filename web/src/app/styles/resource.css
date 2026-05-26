@@ -572,6 +572,9 @@
 }
 
 .project-info-description {
+  box-sizing: border-box;
+  grid-column: 1 / -1;
+  width: calc(100% - 15px);
   max-height: calc(1.5em * 10);
   min-height: 0;
   overflow-y: auto;
@@ -583,22 +586,27 @@
   scrollbar-color: #b8c6d6 transparent;
   scrollbar-width: thin;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .project-info-content {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
-  gap: 14px;
-  max-height: min(680px, calc(100vh - 220px));
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.68fr);
+  gap: 14px 16px;
+  height: min(680px, calc(100vh - 220px));
   min-height: 0;
   overflow: hidden;
   padding-bottom: 18px;
   color: #26344d;
 }
 
+.project-info-content-described {
+  grid-template-rows: max-content minmax(0, 1fr);
+}
+
 .project-info-main {
   display: grid;
+  grid-template-rows: max-content max-content minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
   overflow: hidden;
@@ -728,20 +736,28 @@
 }
 
 .project-info-summary > header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 
 .project-info-summary > header strong {
+  min-width: 0;
+  overflow: hidden;
   color: #162033;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-info-summary > header span {
+  min-width: 0;
+  overflow: hidden;
   color: #7a8aa0;
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-info-summary-task {
@@ -753,12 +769,10 @@
 
 .project-info-summary-task > span {
   min-width: 0;
-  overflow: hidden;
   color: #162033;
   font-size: 13px;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .project-info-summary-block {
@@ -779,6 +793,7 @@
   color: #26344d;
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .project-info-summary-block ul {
@@ -1008,7 +1023,7 @@
 
   .project-info-content {
     grid-template-columns: 1fr;
-    max-height: none;
+    height: auto;
     overflow: visible;
   }
 

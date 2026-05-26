@@ -32,7 +32,9 @@ export function WorkProjectInfoModal({ open, loading, project, onClose }: WorkPr
     >
       <Spin spinning={loading}>
         {project ? (
-          <div className="project-info-content">
+          <div className={`project-info-content${project.description ? " project-info-content-described" : ""}`}>
+            {project.description ? <div className="project-info-description">{project.description}</div> : null}
+
             <div className="project-info-main">
               <section className="project-info-meta">
                 <div>
@@ -107,7 +109,6 @@ function ProjectInfoTitle({ project }: { project: WorkProject | null }) {
   return (
     <div className="project-info-title">
       <strong>{project?.name ?? "Work Project"}</strong>
-      {project?.description ? <span className="project-info-description">{project.description}</span> : null}
     </div>
   );
 }
