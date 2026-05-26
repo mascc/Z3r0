@@ -2759,6 +2759,21 @@
             "title": "Assets Text",
             "type": "string"
           },
+          "can_cancel": {
+            "default": false,
+            "title": "Can Cancel",
+            "type": "boolean"
+          },
+          "can_create_session": {
+            "default": false,
+            "title": "Can Create Session",
+            "type": "boolean"
+          },
+          "can_retry": {
+            "default": false,
+            "title": "Can Retry",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",

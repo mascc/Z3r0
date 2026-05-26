@@ -32,7 +32,7 @@ async def recover_pending_sessions() -> None:
         if not await can_run_work_project_session(session.session_id, auth_user.id, auth_user.role):
             await agent_sessions.force_mark_session_stopped(
                 session.session_id,
-                error="WorkProject is not runnable.",
+                error="WorkProject is canceled.",
             )
             continue
         agent_code = session.runtime_agent_code or session.agent_code

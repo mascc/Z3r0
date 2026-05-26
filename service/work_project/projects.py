@@ -40,6 +40,18 @@ class WorkProjectSessionCreateResult:
         self.inactive = inactive
 
 
+def can_create_work_project_session(status: WorkProjectStatus) -> bool:
+    return status != WorkProjectStatus.CANCELED
+
+
+def can_cancel_work_project(status: WorkProjectStatus) -> bool:
+    return status != WorkProjectStatus.CANCELED
+
+
+def can_retry_work_project(status: WorkProjectStatus) -> bool:
+    return status == WorkProjectStatus.CANCELED
+
+
 async def validate_work_project_metadata(
     request: CreateWorkProjectRequest | UpdateWorkProjectMetadataRequest,
 ) -> str:
@@ -137,7 +149,7 @@ async def cancel_work_project(id: int) -> tuple[WorkProjectSchema | None, bool]:
         project = await session.get(WorkProject, id)
         if project is None:
             return None, False
-        if project.status != WorkProjectStatus.WORKING:
+        if not can_cancel_work_project(project.status):
             return await _project_schema(session, project), False
 
         project.status = WorkProjectStatus.CANCELED
@@ -187,7 +199,7 @@ async def retry_work_project(id: int) -> tuple[WorkProjectSchema | None, bool]:
         project = await session.get(WorkProject, id)
         if project is None:
             return None, False
-        if project.status != WorkProjectStatus.CANCELED:
+        if not can_retry_work_project(project.status):
             return await _project_schema(session, project), False
 
         project.status = derive_work_project_status(project.tasks, WorkProjectStatus.WORKING)
@@ -233,7 +245,7 @@ async def create_work_project_session(
         )).first()
         if project is None:
             return WorkProjectSessionCreateResult(not_found=True)
-        if project.status != WorkProjectStatus.WORKING:
+        if not can_create_work_project_session(project.status):
             return WorkProjectSessionCreateResult(inactive=True)
         title = await _next_project_session_title(session, project_id)
 
@@ -281,7 +293,7 @@ async def can_run_work_project_session(
         if not await _can_access_work_project_in_tx(session, meta.project_id, user_id, user_role):
             return False
         project = await session.get(WorkProject, meta.project_id)
-        return project is not None and project.status == WorkProjectStatus.WORKING
+        return project is not None and can_create_work_project_session(project.status)
 
 
 async def delete_work_project_session(
@@ -420,6 +432,9 @@ def _project_schema_payload(
         "progress": project.progress,
         "session_count": session_count,
         "status": project.status,
+        "can_create_session": can_create_work_project_session(project.status),
+        "can_cancel": can_cancel_work_project(project.status),
+        "can_retry": can_retry_work_project(project.status),
         "type": project.type,
         "created_at": project.created_at,
         "updated_at": project.updated_at,

@@ -1,16 +1,14 @@
-import { Button, Popconfirm, Progress, Tag } from "@douyinfe/semi-ui";
+import { Button, Popconfirm, Progress } from "@douyinfe/semi-ui";
 import {
   Ban,
   ChevronDown,
   ChevronRight,
-  ClipboardList,
   Edit3,
   FolderKanban,
   Plus,
   RefreshCw,
   RotateCcw,
   Trash2,
-  UserRound,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAdminHeaderActions, useRefreshWorkProjects } from "../../app/layouts/AdminLayout";
@@ -31,26 +29,20 @@ import { ResourcePageShell } from "../../shared/components/ResourcePageShell";
 import { ResourceTable, type ResourceColumn } from "../../shared/components/ResourceTable";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
 import { formatDateTime } from "../../shared/lib/date";
-import {
-  WORK_PROJECT_STATUS_COLOR,
-  WORK_PROJECT_STATUS_LABEL,
-  WORK_PROJECT_TASK_STATUS_COLOR,
-  WORK_PROJECT_TASK_STATUS_LABEL,
-  WORK_PROJECT_TYPE_COLOR,
-  WORK_PROJECT_TYPE_LABEL,
-} from "../../shared/lib/labels";
 import { WorkProjectFormModal } from "./WorkProjectFormModal";
+import {
+  WorkProjectAssets,
+  WorkProjectPanel,
+  WorkProjectStatusTag,
+  WorkProjectSummaries,
+  WorkProjectTasks,
+  WorkProjectTypeTag,
+  workProjectAssetLines,
+  workProjectOwnerNames,
+} from "./workProjectView";
 
 const DEFAULT_PAGE_SIZE = 10;
 type AdminAction = "cancel" | "retry" | "delete";
-
-function assetLines(project: WorkProject): string[] {
-  return project.assets_text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-}
-
-function ownerNames(project: WorkProject): string {
-  return project.owners.map((owner) => owner.username).join(", ") || "No owners";
-}
 
 export function WorkProjectsPage() {
   const {
@@ -86,7 +78,7 @@ export function WorkProjectsPage() {
       (acc, project) => ({
         working: acc.working + (project.status === "working" ? 1 : 0),
         sessions: acc.sessions + project.session_count,
-        assets: acc.assets + assetLines(project).length,
+        assets: acc.assets + workProjectAssetLines(project).length,
       }),
       { working: 0, sessions: 0, assets: 0 },
     ),
@@ -154,16 +146,16 @@ export function WorkProjectsPage() {
           <div className="resource-avatar"><FolderKanban size={18} /></div>
           <div>
             <strong>{project.name}</strong>
-            <span>{ownerNames(project)} · {project.session_count} sessions</span>
+            <span>{workProjectOwnerNames(project)} · {project.session_count} sessions</span>
           </div>
         </div>
       ),
     },
-    { key: "type", header: "Type", width: "132px", render: (project) => <Tag color={WORK_PROJECT_TYPE_COLOR[project.type]}>{WORK_PROJECT_TYPE_LABEL[project.type]}</Tag> },
-    { key: "status", header: "Status", width: "104px", render: (project) => <Tag color={WORK_PROJECT_STATUS_COLOR[project.status]}>{WORK_PROJECT_STATUS_LABEL[project.status]}</Tag> },
+    { key: "type", header: "Type", width: "132px", render: (project) => <WorkProjectTypeTag project={project} /> },
+    { key: "status", header: "Status", width: "104px", render: (project) => <WorkProjectStatusTag project={project} /> },
     {
       key: "scope", header: "Scope", width: "minmax(170px, 0.5fr)",
-      render: (project) => <div className="resource-description">{assetLines(project).length} assets · {project.tasks.length} tasks</div>,
+      render: (project) => <div className="resource-description">{workProjectAssetLines(project).length} assets · {project.tasks.length} tasks</div>,
     },
     { key: "updated", header: "Updated", width: "minmax(150px, 0.4fr)", render: (p) => formatDateTime(p.updated_at) },
     {
@@ -179,17 +171,17 @@ export function WorkProjectsPage() {
           <Button
             icon={<Ban size={15} />}
             theme="borderless"
-            disabled={project.status !== "working"}
+            disabled={!project.can_cancel}
             loading={adminAction?.id === project.id && adminAction.type === "cancel"}
             aria-label={`Cancel ${project.name}`}
             onClick={() => void handleAdminProjectAction(project, "cancel")}
           />
           <Button
-              icon={<RotateCcw size={15} />}
-              theme="borderless"
-              disabled={project.status !== "canceled"}
-              loading={adminAction?.id === project.id && adminAction.type === "retry"}
-              aria-label={`Retry ${project.name}`}
+            icon={<RotateCcw size={15} />}
+            theme="borderless"
+            disabled={!project.can_retry}
+            loading={adminAction?.id === project.id && adminAction.type === "retry"}
+            aria-label={`Retry ${project.name}`}
             onClick={() => void handleAdminProjectAction(project, "retry")}
           />
           <Popconfirm title="Delete project" content={`Delete ${project.name} and all project sessions?`} okType="danger" onConfirm={() => void handleAdminProjectAction(project, "delete")}>
@@ -259,14 +251,14 @@ function WorkProjectExpanded({
 }: {
   project: WorkProject;
 }) {
-  const assets = assetLines(project);
+  const assets = workProjectAssetLines(project);
 
   return (
     <div className="work-project-expanded">
       <section className="work-project-meta">
         <div>
           <span>Owner</span>
-          <strong>{ownerNames(project)}</strong>
+          <strong>{workProjectOwnerNames(project)}</strong>
         </div>
         <div>
           <span>Sandbox</span>
@@ -279,83 +271,23 @@ function WorkProjectExpanded({
       </section>
 
       <section className="work-project-detail-grid">
-        <Panel title="Assets" empty={assets.length === 0 ? "No assets." : ""}>
-          <div className="work-project-asset-list">
-            {assets.map((asset, index) => (
-              <div key={`${index}:${asset}`}>{asset}</div>
-            ))}
-          </div>
-        </Panel>
-        <Panel title="Tasks" empty={project.tasks.length === 0 ? "No tasks." : ""}>
-          <div className="work-project-task-list">
-            {project.tasks.map((task) => (
-              <div key={task.id ?? task.title} className="work-project-task-row">
-                <ClipboardList size={14} />
-                <span>{task.title}</span>
-                <Tag color={WORK_PROJECT_TASK_STATUS_COLOR[task.status]}>{WORK_PROJECT_TASK_STATUS_LABEL[task.status]}</Tag>
-                <Progress percent={task.progress} size="small" showInfo={false} />
-              </div>
-            ))}
-          </div>
-        </Panel>
+        <WorkProjectPanel title="Assets" empty={assets.length === 0 ? "No assets." : ""} className="work-project-panel" emptyClassName="work-project-panel-empty">
+          <WorkProjectAssets project={project} className="work-project-asset-list" />
+        </WorkProjectPanel>
+        <WorkProjectPanel title="Tasks" empty={project.tasks.length === 0 ? "No tasks." : ""} className="work-project-panel" emptyClassName="work-project-panel-empty">
+          <WorkProjectTasks project={project} className="work-project-task-list" rowClassName="work-project-task-row" showIcon />
+        </WorkProjectPanel>
       </section>
-      <Panel title="Agent Summaries" empty={project.agent_summaries.length === 0 ? "No summaries." : ""}>
-        <div className="work-project-summary-list">
-          {project.agent_summaries.map((summary) => (
-            <article key={summary.agent_code} className="work-project-summary-row">
-              <header>
-                <UserRound size={14} />
-                <strong>{summary.agent_code}</strong>
-                {summary.updated_at ? <span>{formatDateTime(summary.updated_at)}</span> : null}
-              </header>
-              {summary.summary?.task_id || summary.summary?.task_title ? (
-                <div className="work-project-summary-progress">
-                  <span>{summary.summary.task_id || summary.summary.task_title}</span>
-                  <Progress percent={summary.summary.progress ?? 0} size="small" showInfo />
-                </div>
-              ) : null}
-              <SummaryBlock label="Status" value={summary.summary?.status} />
-              <SummaryList label="Findings" values={summary.summary?.findings ?? []} />
-              <SummaryList label="Decisions" values={summary.summary?.decisions ?? []} />
-              <SummaryList label="Blockers" values={summary.summary?.blockers ?? []} />
-              <SummaryList label="Next Steps" values={summary.summary?.next_steps ?? []} />
-              <SummaryList label="Evidence" values={summary.summary?.evidence ?? []} />
-              <SummaryBlock label="Notes" value={summary.summary?.notes} />
-            </article>
-          ))}
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function Panel({ title, empty, children }: { title: string; empty: string; children: React.ReactNode }) {
-  return (
-    <div className="work-project-panel">
-      <strong>{title}</strong>
-      {empty ? <span className="work-project-panel-empty">{empty}</span> : children}
-    </div>
-  );
-}
-
-function SummaryBlock({ label, value }: { label: string; value?: string }) {
-  if (!value) return null;
-  return (
-    <div className="work-project-summary-block">
-      <span>{label}</span>
-      <p>{value}</p>
-    </div>
-  );
-}
-
-function SummaryList({ label, values }: { label: string; values: string[] }) {
-  if (!values.length) return null;
-  return (
-    <div className="work-project-summary-block">
-      <span>{label}</span>
-      <ul>
-        {values.map((value, index) => <li key={`${index}:${value}`}>{value}</li>)}
-      </ul>
+      <WorkProjectPanel title="Agent Summaries" empty={project.agent_summaries.length === 0 ? "No summaries." : ""} className="work-project-panel" emptyClassName="work-project-panel-empty">
+        <WorkProjectSummaries
+          project={project}
+          className="work-project-summary-list"
+          rowClassName="work-project-summary-row"
+          progressClassName="work-project-summary-progress"
+          blockClassName="work-project-summary-block"
+          showIcon
+        />
+      </WorkProjectPanel>
     </div>
   );
 }

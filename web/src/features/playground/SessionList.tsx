@@ -345,7 +345,7 @@ function ProjectGroup({
           theme="borderless"
           type="primary"
           size="small"
-          disabled={project.status !== "working"}
+          disabled={!project.can_create_session}
           aria-label={`Create session for ${project.name}`}
           onClick={() => onCreateSession(project)}
         />
@@ -358,7 +358,7 @@ function ProjectGroup({
             <button
               type="button"
               className="session-project-empty"
-              disabled={project.status !== "working"}
+              disabled={!project.can_create_session}
               onClick={() => onCreateSession(project)}
             >
               <FolderKanban size={14} />

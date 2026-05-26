@@ -384,7 +384,7 @@
 }
 
 .work-project-meta span,
-.work-project-panel > strong {
+.work-project-panel > header {
   color: #68778f;
   font-size: 12px;
   font-weight: 800;
@@ -409,6 +409,12 @@
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.work-project-panel > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .work-project-panel-empty {
@@ -564,11 +570,17 @@
   white-space: nowrap;
 }
 
-.project-info-title span {
+.project-info-description {
+  max-height: 96px;
+  overflow-y: auto;
+  padding-right: 4px;
   color: #66758b;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
+  scrollbar-color: #b8c6d6 transparent;
+  scrollbar-width: thin;
+  white-space: pre-wrap;
 }
 
 .project-info-content {

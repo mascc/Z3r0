@@ -70,7 +70,7 @@ async def cancel_work_project_handler(id: int) -> CommonResponse:
     if not canceled:
         return CommonResponse(
             code=HTTPStatus.BAD_REQUEST.value,
-            message="only working projects can be canceled",
+            message="canceled projects cannot be canceled again",
             data=project,
         )
     return CommonResponse(message="work project canceled", data=project)
@@ -112,7 +112,7 @@ async def create_work_project_session_handler(
     if result.not_found:
         return CommonResponse(code=HTTPStatus.NOT_FOUND.value, message="work project not found")
     if result.inactive:
-        return CommonResponse(code=HTTPStatus.BAD_REQUEST.value, message="only working projects can create sessions")
+        return CommonResponse(code=HTTPStatus.BAD_REQUEST.value, message="canceled projects cannot create sessions")
     return CommonResponse(data=CreateWorkProjectSessionResponse(session_id=result.session_id))
 
 

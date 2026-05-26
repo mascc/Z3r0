@@ -38,7 +38,7 @@ async def submit_turn(
     if not await agent_sessions.can_access_session(session_id, user.id, user.role):
         raise PermissionError("agent session not found")
     if not await can_run_work_project_session(session_id, user.id, user.role):
-        raise SessionNotRunnableError("work project is not runnable")
+        raise SessionNotRunnableError("work project is canceled")
     agent_code = await agent_sessions.ensure_chat_session_meta(
         session_id,
         text,
@@ -66,7 +66,7 @@ def not_found_error() -> ErrorEvent:
 
 
 def not_runnable_error() -> ErrorEvent:
-    return ErrorEvent(created_at=datetime.now(), message="work project is not runnable", code="bad_request")
+    return ErrorEvent(created_at=datetime.now(), message="work project is canceled", code="bad_request")
 
 
 def done_event() -> DoneEvent:

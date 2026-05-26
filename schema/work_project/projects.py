@@ -119,6 +119,9 @@ class WorkProjectSchema(BaseModel):
     progress: float = Field(default=0, ge=0, le=100)
     session_count: int = 0
     status: WorkProjectStatus
+    can_create_session: bool = False
+    can_cancel: bool = False
+    can_retry: bool = False
     type: WorkProjectType
     created_at: datetime
     updated_at: datetime

@@ -1967,6 +1967,21 @@ export interface components {
             /** Assets Text */
             assets_text: string;
             /**
+             * Can Cancel
+             * @default false
+             */
+            can_cancel: boolean;
+            /**
+             * Can Create Session
+             * @default false
+             */
+            can_create_session: boolean;
+            /**
+             * Can Retry
+             * @default false
+             */
+            can_retry: boolean;
+            /**
              * Created At
              * Format: date-time
              */
