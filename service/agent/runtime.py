@@ -3,12 +3,14 @@ import shlex
 from datetime import datetime
 
 from core.runtime.context import AgentRuntimeContext, AgentUserContext, main_agent_instance_id
+from core.runtime.input_items import display_text_from_content
 from core.runtime.session import get_agent_pool
 from core.tools.knowledge import current_knowledge_generation
 from core.tools.sandbox import SANDBOX_SKILLS_DIR
 from logger import get_logger
 from middleware.auth import AuthUser
 from schema.agent.events import DoneEvent, ErrorEvent
+from schema.agent.events import AgentInputPart
 from service.agent import sessions as agent_sessions
 from service.sandbox.commands import execute_sandbox_container_command
 from service.sandbox.status import (
@@ -30,7 +32,7 @@ class SessionNotRunnableError(PermissionError):
 async def submit_turn(
     *,
     session_id: str,
-    text: str,
+    content: list[AgentInputPart],
     user: AuthUser,
     sandbox_container_id: int | None,
     requested_agent_code: str | None,
@@ -39,16 +41,17 @@ async def submit_turn(
         raise PermissionError("agent session not found")
     if not await can_run_work_project_session(session_id, user.id, user.role):
         raise SessionNotRunnableError("work project is canceled")
+    display_text = display_text_from_content(content)
     agent_code = await agent_sessions.ensure_chat_session_meta(
         session_id,
-        text,
+        display_text,
         requested_agent_code,
         user_id=user.id,
         user_role=user.role,
     )
     context = await build_runtime_context(session_id, user, sandbox_container_id, agent_code)
     runtime = await get_agent_pool().get_or_create(session_id)
-    await runtime.start_turn(text, agent_code, context)
+    await runtime.start_turn(content, agent_code, context)
 
 
 async def interrupt_turn(*, session_id: str, user: AuthUser) -> bool:

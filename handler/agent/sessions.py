@@ -12,6 +12,7 @@ from logger import get_logger
 from middleware.auth import AuthUser, decode_access_token
 from schema.agent.events import (
     AgentEventSchema,
+    AgentInputPart,
     AgentStreamActionSchema,
     ErrorEvent,
     agent_stream_command_adapter,
@@ -106,11 +107,37 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
         subagent_forwarder = asyncio.create_task(_forward_events(websocket, subscriber, send_lock, session_id, user))
 
         while True:
-            payload = await websocket.receive_json()
+            try:
+                payload = await websocket.receive_json()
+            except WebSocketDisconnect:
+                raise
+            except Exception as exc:
+                logger.info("agent stream rejected unreadable websocket payload: %s", exc)
+                await _send_event(
+                    websocket,
+                    ErrorEvent(
+                        created_at=datetime.now(),
+                        message="Invalid websocket payload: expected a JSON stream command",
+                        code="bad_request",
+                    ),
+                    send_lock,
+                )
+                await _send_event(websocket, agent_runtime.done_event(), send_lock)
+                continue
             try:
                 command = agent_stream_command_adapter.validate_python(payload)
-            except ValidationError:
-                logger.debug("agent stream ignored invalid payload: %r", payload)
+            except ValidationError as exc:
+                logger.info("agent stream rejected invalid payload: %s", _validation_error_message(exc))
+                await _send_event(
+                    websocket,
+                    ErrorEvent(
+                        created_at=datetime.now(),
+                        message=f"Invalid message payload: {_validation_error_message(exc)}",
+                        code="bad_request",
+                    ),
+                    send_lock,
+                )
+                await _send_event(websocket, agent_runtime.done_event(), send_lock)
                 continue
 
             if command.action == AgentStreamActionSchema.INTERRUPT:
@@ -121,13 +148,10 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
                 await _cancel_all_tasks(websocket, session_id, user, send_lock)
                 continue
 
-            text = command.text.strip()
-            if not text:
-                continue
             await _start_turn(
                 websocket=websocket,
                 session_id=session_id,
-                text=text,
+                content=command.content,
                 user=user,
                 sandbox_container_id=command.sandbox_container_id,
                 requested_agent_code=command.agent_code,
@@ -150,7 +174,7 @@ async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str)
 async def _start_turn(
     websocket: WebSocket,
     session_id: str,
-    text: str,
+    content: list[AgentInputPart],
     user: AuthUser,
     sandbox_container_id: int | None,
     requested_agent_code: str | None,
@@ -159,7 +183,7 @@ async def _start_turn(
     try:
         await agent_runtime.submit_turn(
             session_id=session_id,
-            text=text,
+            content=content,
             user=user,
             sandbox_container_id=sandbox_container_id,
             requested_agent_code=requested_agent_code,
@@ -270,3 +294,13 @@ def _decode_ws_token(token: str) -> AuthUser | None:
         return decode_access_token(token)
     except Exception:
         return None
+
+
+def _validation_error_message(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return str(exc)
+    first = errors[0]
+    loc = ".".join(str(part) for part in first.get("loc", ()) if part != "__root__")
+    msg = str(first.get("msg") or "invalid payload")
+    return f"{loc}: {msg}" if loc else msg

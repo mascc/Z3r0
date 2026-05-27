@@ -595,6 +595,29 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AgentEventSchema: components["schemas"]["UserMessageEvent"] | components["schemas"]["TurnBoundaryEvent"] | components["schemas"]["RunStateEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["SubagentTaskEvent"] | components["schemas"]["DoneEvent"] | components["schemas"]["ErrorEvent"];
+        /**
+         * AgentImageDetailSchema
+         * @enum {string}
+         */
+        AgentImageDetailSchema: "auto" | "low" | "high";
+        /** AgentImageInputPart */
+        AgentImageInputPart: {
+            /** Data */
+            data: string;
+            /** @default auto */
+            detail: components["schemas"]["AgentImageDetailSchema"];
+            media_type: components["schemas"]["AgentImageMediaTypeSchema"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "image";
+        };
+        /**
+         * AgentImageMediaTypeSchema
+         * @enum {string}
+         */
+        AgentImageMediaTypeSchema: "image/png" | "image/jpeg" | "image/webp";
         /** AgentInfoSchema */
         AgentInfoSchema: {
             /** Code */
@@ -701,20 +724,30 @@ export interface components {
              * @default null
              */
             agent_code: string | null;
+            /** Content */
+            content: (components["schemas"]["AgentTextInputPart"] | components["schemas"]["AgentImageInputPart"])[];
             /**
              * Sandbox Container Id
              * @description Selected running sandbox container. Backend mounts sandbox tools only when this container is still usable by the current user.
              * @default null
              */
             sandbox_container_id: number | null;
-            /** Text */
-            text: string;
         };
         /**
          * AgentSubordinateStatus
          * @enum {string}
          */
         AgentSubordinateStatus: "running" | "completed" | "failed" | "canceled";
+        /** AgentTextInputPart */
+        AgentTextInputPart: {
+            /** Text */
+            text: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text";
+        };
         /** Body_upload_container_files_route_api_sandbox_containers__id__files_upload_post */
         Body_upload_container_files_route_api_sandbox_containers__id__files_upload_post: {
             /** Files */
@@ -1876,18 +1909,23 @@ export interface components {
         };
         /** UserMessageEvent */
         UserMessageEvent: {
+            /** Content */
+            content: (components["schemas"]["AgentTextInputPart"] | components["schemas"]["AgentImageInputPart"])[];
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
             /**
+             * Display Text
+             * @default
+             */
+            display_text: string;
+            /**
              * Target Agent Code
              * @default
              */
             target_agent_code: string;
-            /** Text */
-            text: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

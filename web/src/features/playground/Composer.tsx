@@ -1,8 +1,8 @@
-import { Button, TextArea } from "@douyinfe/semi-ui";
-import { AtSign, OctagonX, Send, Square } from "lucide-react";
-import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, TextArea, Toast } from "@douyinfe/semi-ui";
+import { AtSign, ImagePlus, OctagonX, Send, Square, X } from "lucide-react";
+import { ClipboardEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentPicker } from "./AgentPicker";
-import type { AgentInfo } from "../../shared/api/types";
+import type { AgentImageInputPart, AgentInfo, AgentInputPart } from "../../shared/api/types";
 
 type ComposerProps = {
   streaming: boolean;
@@ -12,10 +12,15 @@ type ComposerProps = {
   agentSwitchDisabled?: boolean;
   canCancelAll?: boolean;
   onPickAgent: (code: string) => void;
-  onSend: (text: string) => void;
+  onSend: (content: AgentInputPart[]) => void;
   onInterrupt: () => void;
   onCancelAll: () => void;
 };
+
+const ACCEPTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 3.75 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_BYTES = 6 * 1024 * 1024;
 
 export function Composer({
   streaming,
@@ -30,10 +35,12 @@ export function Composer({
   onCancelAll,
 }: ComposerProps) {
   const [text, setText] = useState("");
+  const [images, setImages] = useState<AgentImageInputPart[]>([]);
   const [highlight, setHighlight] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeAgent = useMemo(
     () => agents.find((agent) => agent.code === activeAgentCode) ?? null,
@@ -69,11 +76,55 @@ export function Composer({
 
   const submit = () => {
     const trimmed = text.trim();
-    if (!trimmed || streaming || disabled) return;
-    onSend(trimmed);
+    if ((!trimmed && images.length === 0) || streaming || disabled) return;
+    const content: AgentInputPart[] = [
+      ...(trimmed ? [{ type: "text" as const, text: trimmed }] : []),
+      ...images,
+    ];
+    onSend(content);
     setText("");
+    setImages([]);
     closePicker();
   };
+
+  const addImageFiles = useCallback(async (files: File[]) => {
+    const imageFiles = files.filter((file) => ACCEPTED_IMAGE_TYPES.has(file.type));
+    if (!imageFiles.length) return;
+    const available = Math.max(0, MAX_IMAGES - images.length);
+    if (available === 0) {
+      Toast.warning(`最多支持 ${MAX_IMAGES} 张图片`);
+      return;
+    }
+    const next: AgentImageInputPart[] = [];
+    const currentBytes = images.reduce((total, image) => total + base64DecodedSize(image.data), 0);
+    let nextBytes = 0;
+    for (const file of imageFiles.slice(0, available)) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        Toast.warning(`${file.name} 超过 3.75MB，已跳过`);
+        continue;
+      }
+      if (currentBytes + nextBytes + file.size > MAX_TOTAL_IMAGE_BYTES) {
+        Toast.warning("图片总大小超过 6MB，已跳过部分图片");
+        continue;
+      }
+      try {
+        next.push(await fileToImagePart(file));
+        nextBytes += file.size;
+      } catch {
+        Toast.error(`${file.name} 读取失败`);
+      }
+    }
+    if (next.length) {
+      setImages((current) => [...current, ...next].slice(0, MAX_IMAGES));
+    }
+  }, [images]);
+
+  const handlePaste = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files).filter((file) => ACCEPTED_IMAGE_TYPES.has(file.type));
+    if (!files.length) return;
+    event.preventDefault();
+    void addImageFiles(files);
+  }, [addImageFiles]);
 
   const pickAgent = (agent: AgentInfo) => {
     if (agentSwitchDisabled) return;
@@ -129,8 +180,14 @@ export function Composer({
   };
 
   const action = streaming
-    ? { icon: <Square size={16} />, type: "danger" as const, label: "Stop", onClick: onInterrupt, disabled: false }
-    : { icon: <Send size={16} />, type: "primary" as const, label: "Send", onClick: submit, disabled: disabled || !text.trim() };
+    ? { icon: <Square size={16} />, type: "danger" as const, title: "Stop", onClick: onInterrupt, disabled: false }
+    : {
+        icon: <Send size={16} />,
+        type: "primary" as const,
+        title: "Send",
+        onClick: submit,
+        disabled: disabled || (!text.trim() && images.length === 0),
+      };
 
   return (
     <div ref={wrapperRef} className={`composer${streaming ? " composer-streaming" : ""}`}>
@@ -147,23 +204,31 @@ export function Composer({
             />
           </div>
         ) : null}
-        <div className="composer-row">
-          <button
-            type="button"
-            className="composer-agent-chip"
-            onClick={toggleChip}
-            disabled={agentSwitchDisabled}
-            aria-label={activeAgent ? `Speaking to ${activeAgent.name}` : "Pick an agent"}
-            title={agentSwitchDisabled ? agentSwitchDisabledReason : activeAgent ? "Click to switch agent" : "Pick an agent"}
-          >
-            <AtSign size={14} />
-            <span>{activeAgent?.name || "Agent"}</span>
-          </button>
+        <div className="composer-panel">
+          {images.length ? (
+            <div className="composer-attachments">
+              {images.map((image, index) => (
+                <div key={`${image.media_type}:${index}:${image.data.length}`} className="composer-attachment">
+                  <img src={`data:${image.media_type};base64,${image.data}`} alt="Attachment preview" />
+                  <button
+                    type="button"
+                    className="composer-attachment-remove"
+                    onClick={() => setImages((current) => current.filter((_, i) => i !== index))}
+                    aria-label="Remove image"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <TextArea
             value={text}
             onChange={setText}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             autosize={{ minRows: 1, maxRows: 8 }}
+            borderless
             disabled={disabled && !streaming}
             placeholder={
               disabled
@@ -173,27 +238,92 @@ export function Composer({
                   : "Send a message · Shift+Enter for newline"
             }
           />
-          <Button
-            icon={action.icon}
-            theme="solid"
-            type={action.type}
-            onClick={action.onClick}
-            disabled={action.disabled}
-            aria-label={streaming ? "Interrupt streaming" : "Send message"}
-          >
-            {action.label}
-          </Button>
-          <Button
-            icon={<OctagonX size={16} />}
-            theme="solid"
-            type="danger"
-            onClick={onCancelAll}
-            disabled={disabled || !canCancelAll}
-            aria-label="Cancel all running subagent tasks"
-            title={canCancelAll ? "Cancel all running subagent tasks" : "No running subagent tasks"}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            className="composer-file-input"
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              void addImageFiles(files);
+            }}
           />
+          <div className="composer-footer">
+            <button
+              type="button"
+              className="composer-agent-chip"
+              onClick={toggleChip}
+              disabled={agentSwitchDisabled}
+              aria-label={activeAgent ? `Speaking to ${activeAgent.name}` : "Pick an agent"}
+              title={agentSwitchDisabled ? agentSwitchDisabledReason : activeAgent ? "Click to switch agent" : "Pick an agent"}
+            >
+              <AtSign size={14} />
+              <span>{activeAgent?.name || "Agent"}</span>
+            </button>
+            <div className="composer-actions">
+              <Button
+                className="composer-action-button"
+                icon={<ImagePlus size={16} />}
+                theme="borderless"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || streaming || images.length >= MAX_IMAGES}
+                aria-label="Attach image"
+                title="Attach image"
+              />
+              <Button
+                className="composer-action-button"
+                icon={action.icon}
+                theme="solid"
+                type={action.type}
+                onClick={action.onClick}
+                disabled={action.disabled}
+                aria-label={streaming ? "Interrupt streaming" : "Send message"}
+                title={action.title}
+              />
+              <Button
+                className="composer-action-button"
+                icon={<OctagonX size={16} />}
+                theme="borderless"
+                type="danger"
+                onClick={onCancelAll}
+                disabled={disabled || !canCancelAll}
+                aria-label="Cancel all running subagent tasks"
+                title={canCancelAll ? "Cancel all running subagent tasks" : "No running subagent tasks"}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function base64DecodedSize(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(value.length * 3 / 4) - padding);
+}
+
+function fileToImagePart(file: File): Promise<AgentImageInputPart> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const [prefix, data] = value.split(",", 2);
+      const match = /^data:(image\/(?:png|jpeg|webp));base64$/.exec(prefix);
+      if (!match || !data) {
+        reject(new Error("invalid image data"));
+        return;
+      }
+      resolve({
+        type: "image",
+        media_type: match[1] as AgentImageInputPart["media_type"],
+        data,
+        detail: "auto",
+      });
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("failed to read image"));
+    reader.readAsDataURL(file);
+  });
 }

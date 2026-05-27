@@ -64,7 +64,7 @@ def estimate_items_tokens(items: list[TResponseInputItem], model: str) -> int:
     total = 0
     for item in items:
         total += 4
-        total += len(encoding.encode(json.dumps(item, ensure_ascii=False, separators=(",", ":"))))
+        total += len(encoding.encode(json.dumps(_summary_safe_value(item), ensure_ascii=False, separators=(",", ":"))))
     return total
 
 
@@ -342,7 +342,7 @@ async def _summarize_items(items: list[TResponseInputItem], agent_config: AgentC
         model_settings=ModelSettings(max_tokens=cfg.context_compression_summary_max_tokens),
         instructions=_SUMMARY_AGENT_INSTRUCTIONS,
     )
-    payload = json.dumps(items, ensure_ascii=False, indent=2)
+    payload = json.dumps(_summary_safe_value(items), ensure_ascii=False, indent=2)
     result = await Runner.run(
         starting_agent=agent,
         input=(
@@ -366,6 +366,30 @@ def _summary_item(summary_text: str) -> TResponseInputItem:
             "text": _SUMMARY_PREFIX + "This is an automatically generated summary of earlier conversation, not a new user request.\n\n" + summary_text.strip(),
         }],
     }
+
+
+def _summary_safe_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_summary_safe_value(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if value.get("type") == "input_image":
+        media_type = _image_media_type(value.get("image_url"))
+        return {
+            "type": "input_image",
+            "image_url": f"data:{media_type};base64,[omitted]",
+            "detail": value.get("detail") or "auto",
+            "note": "image bytes omitted from context compaction prompt",
+        }
+    return {key: _summary_safe_value(item) for key, item in value.items()}
+
+
+def _image_media_type(image_url: Any) -> str:
+    if not isinstance(image_url, str) or not image_url.startswith("data:"):
+        return "image/*"
+    header = image_url.split(",", 1)[0]
+    media_type = header.removeprefix("data:").split(";", 1)[0]
+    return media_type or "image/*"
 
 
 @lru_cache(maxsize=256)

@@ -1,8 +1,9 @@
 from enum import StrEnum
 from datetime import datetime
+import base64
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, field_validator, model_validator
 
 from schema.agent.subordinates import AgentSubordinateStatus
 
@@ -28,6 +29,64 @@ class AgentStreamActionSchema(StrEnum):
     CANCEL_ALL = "cancel_all"
 
 
+class AgentInputPartTypeSchema(StrEnum):
+    TEXT = "text"
+    IMAGE = "image"
+
+
+class AgentImageDetailSchema(StrEnum):
+    AUTO = "auto"
+    LOW = "low"
+    HIGH = "high"
+
+
+class AgentImageMediaTypeSchema(StrEnum):
+    PNG = "image/png"
+    JPEG = "image/jpeg"
+    WEBP = "image/webp"
+
+
+_MAX_IMAGE_BASE64_LENGTH = 5 * 1024 * 1024
+_MAX_MESSAGE_BASE64_LENGTH = 8 * 1024 * 1024
+
+
+class AgentTextInputPart(BaseModel):
+    type: Literal[AgentInputPartTypeSchema.TEXT] = AgentInputPartTypeSchema.TEXT
+    text: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def normalize_text(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class AgentImageInputPart(BaseModel):
+    type: Literal[AgentInputPartTypeSchema.IMAGE] = AgentInputPartTypeSchema.IMAGE
+    media_type: AgentImageMediaTypeSchema
+    data: str = Field(min_length=1, max_length=_MAX_IMAGE_BASE64_LENGTH)
+    detail: AgentImageDetailSchema = AgentImageDetailSchema.AUTO
+
+    @field_validator("data")
+    @classmethod
+    def validate_base64_data(cls, value: str) -> str:
+        compact = "".join(value.split())
+        if compact.startswith("data:"):
+            raise ValueError("image data must be raw base64 without a data URL prefix")
+        try:
+            base64.b64decode(compact, validate=True)
+        except Exception as exc:
+            raise ValueError("image data must be valid base64") from exc
+        return compact
+
+
+AgentInputPart = Annotated[
+    AgentTextInputPart | AgentImageInputPart,
+    Field(discriminator="type"),
+]
+
+
 class _AgentScopedEvent(BaseModel):
     created_at: datetime
     agent_name: str = ""
@@ -42,7 +101,8 @@ class _AgentScopedEvent(BaseModel):
 class UserMessageEvent(BaseModel):
     type: Literal[AgentEventTypeSchema.USER_MESSAGE] = AgentEventTypeSchema.USER_MESSAGE
     created_at: datetime
-    text: str
+    content: list[AgentInputPart] = Field(min_length=1)
+    display_text: str = ""
     # the agent this message was @-mentioned to; UI renders it as a "@<name>" chip
     target_agent_code: str = ""
 
@@ -151,7 +211,7 @@ AgentEventSchema = Annotated[
 
 class AgentStreamSendCommand(BaseModel):
     action: Literal[AgentStreamActionSchema.SEND] = AgentStreamActionSchema.SEND
-    text: str
+    content: list[AgentInputPart] = Field(min_length=1, max_length=8)
     sandbox_container_id: int | None = Field(
         default=None,
         gt=0,
@@ -162,6 +222,16 @@ class AgentStreamSendCommand(BaseModel):
     )
     # optional @-mention override; null => keep the session's sticky agent
     agent_code: str | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "AgentStreamSendCommand":
+        image_count = sum(1 for part in self.content if isinstance(part, AgentImageInputPart))
+        if image_count > 4:
+            raise ValueError("at most 4 images are allowed in one message")
+        image_bytes = sum(len(part.data) for part in self.content if isinstance(part, AgentImageInputPart))
+        if image_bytes > _MAX_MESSAGE_BASE64_LENGTH:
+            raise ValueError("image payload is too large")
+        return self
 
 
 class AgentStreamInterruptCommand(BaseModel):

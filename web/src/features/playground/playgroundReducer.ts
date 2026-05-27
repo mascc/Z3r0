@@ -1,5 +1,6 @@
 import type {
   AgentContentEvent,
+  AgentInputPart,
   AgentStreamEvent,
   SubagentTaskEvent,
   TextCompleteEvent,
@@ -63,7 +64,14 @@ export type AgentTranscript = {
 export type NestedTranscript = AgentTranscript;
 
 export type ChatNode =
-  | { kind: "user"; id: string; createdAt: AgentContentEvent["created_at"]; text: string; targetAgentCode: string }
+  | {
+      kind: "user";
+      id: string;
+      createdAt: AgentContentEvent["created_at"];
+      content: AgentInputPart[];
+      displayText: string;
+      targetAgentCode: string;
+    }
   | ({ kind: "agent"; id: string } & AgentTranscript);
 
 export type ChatState = {
@@ -87,13 +95,15 @@ type StreamingItem = ThinkingItem | TextItem;
 
 export function appendUserMessage(
   state: ChatState,
-  text: string,
+  content: AgentInputPart[],
+  displayText: string,
   targetAgentCode: string,
   createdAt: AgentContentEvent["created_at"],
 ): ChatState {
+  const signature = contentSignature(content);
   const lastNode = state.nodes[state.nodes.length - 1];
   if (state.streaming) {
-    const existingIndex = findLiveUserMessageIndex(state.nodes, text, targetAgentCode);
+    const existingIndex = findLiveUserMessageIndex(state.nodes, signature, targetAgentCode);
     if (existingIndex !== -1) {
       const existing = state.nodes[existingIndex];
       if (existing.kind !== "user" || !targetAgentCode || existing.targetAgentCode === targetAgentCode) {
@@ -104,7 +114,11 @@ export function appendUserMessage(
       return { ...state, nodes, streaming: true, liveFrom: state.liveFrom ?? nodes.length };
     }
   }
-  if (lastNode?.kind === "user" && lastNode.text === text && (state.streaming || lastNode.createdAt === createdAt)) {
+  if (
+    lastNode?.kind === "user"
+    && contentSignature(lastNode.content) === signature
+    && (state.streaming || lastNode.createdAt === createdAt)
+  ) {
     const liveFrom = state.nodes.length;
     if (!targetAgentCode || lastNode.targetAgentCode === targetAgentCode) {
       return { ...state, streaming: true, liveFrom };
@@ -113,7 +127,14 @@ export function appendUserMessage(
     nodes[nodes.length - 1] = { ...lastNode, targetAgentCode };
     return { ...state, nodes, streaming: true, liveFrom };
   }
-  const nodes = [...state.nodes, { kind: "user" as const, id: newId(), createdAt, text, targetAgentCode }];
+  const nodes = [...state.nodes, {
+    kind: "user" as const,
+    id: newId(),
+    createdAt,
+    content,
+    displayText,
+    targetAgentCode,
+  }];
   return {
     ...state,
     nodes,
@@ -122,11 +143,11 @@ export function appendUserMessage(
   };
 }
 
-function findLiveUserMessageIndex(nodes: ChatNode[], text: string, targetAgentCode: string): number {
+function findLiveUserMessageIndex(nodes: ChatNode[], signature: string, targetAgentCode: string): number {
   for (let index = nodes.length - 1; index >= 0; index -= 1) {
     const node = nodes[index];
     if (node.kind !== "user") continue;
-    if (node.text !== text) return -1;
+    if (contentSignature(node.content) !== signature) return -1;
     if (!targetAgentCode || !node.targetAgentCode || node.targetAgentCode === targetAgentCode) {
       return index;
     }
@@ -159,7 +180,7 @@ export function streamReduce(state: ChatState, event: AgentStreamEvent): ChatSta
 
 function applyContentEvent(state: ChatState, event: AgentContentEvent): ChatState {
   if (event.type === "user_message") {
-    return appendUserMessage(state, event.text, event.target_agent_code, event.created_at);
+    return appendUserMessage(state, event.content, event.display_text, event.target_agent_code, event.created_at);
   }
   if (event.type === "turn_boundary") {
     return event.nested_call_id ? state : finishChatTurn(state);
@@ -491,4 +512,11 @@ function subagentExecutionItemFromEvent(event: SubagentTaskEvent): SubagentExecu
 
 function findToolBlockIndex(blocks: TranscriptBlock[], callId: string): number {
   return blocks.findIndex((block) => block.kind === "tool" && block.callId === callId);
+}
+
+function contentSignature(content: AgentInputPart[]): string {
+  return content.map((part) => {
+    if (part.type === "text") return `text:${part.text}`;
+    return `image:${part.media_type}:${part.data.length}:${part.data.slice(0, 64)}`;
+  }).join("\n");
 }

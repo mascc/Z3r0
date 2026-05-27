@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
 import { showApiError } from "../../shared/api/feedback";
 import { canOpenContainerNoVNC, queryAvailableSandboxContainers } from "../../shared/api/sandboxContainers";
-import type { SandboxContainer } from "../../shared/api/types";
+import type { AgentInputPart, SandboxContainer } from "../../shared/api/types";
 import { useContainerShell } from "../container-shell/ContainerShellProvider";
 import { useAgentSessionContext } from "./AgentSessionProvider";
 import { ChatStream } from "./ChatStream";
@@ -143,9 +143,9 @@ export function PlaygroundPage() {
     return () => setHeaderActions(null);
   }, [headerNode, setHeaderActions]);
 
-  const handleSend = async (text: string) => {
+  const handleSend = async (content: AgentInputPart[]) => {
     try {
-      await send(text, sandboxContainerId);
+      await send(content, sandboxContainerId);
     } catch (error) {
       showApiError(error);
     }
@@ -186,7 +186,7 @@ export function PlaygroundPage() {
                 agentSwitchDisabled={agentSwitchDisabled}
                 canCancelAll={hasRunningSubagents}
                 onPickAgent={setActiveAgentCode}
-                onSend={(text) => void handleSend(text)}
+                onSend={(content) => void handleSend(content)}
                 onInterrupt={() => void interrupt()}
                 onCancelAll={() => void cancelAll()}
               />

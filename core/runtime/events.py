@@ -24,8 +24,14 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from openai.types.responses.response_text_done_event import ResponseTextDoneEvent
 from pydantic import BaseModel
 
+from core.runtime.input_items import display_text_from_content
 from schema.agent.events import (
+    AgentImageDetailSchema,
+    AgentImageInputPart,
+    AgentImageMediaTypeSchema,
     AgentEventSchema,
+    AgentInputPart,
+    AgentTextInputPart,
     ErrorEvent,
     TextCompleteEvent,
     TextDeltaEvent,
@@ -293,13 +299,21 @@ def _events_from_stored_message(
 ) -> list[AgentEventSchema]:
     parts = _stored_message_text_parts(message.get("content"))
     text = "".join(parts)
-    if not text:
-        return []
     role = message.get("role")
     if role == "user":
+        content = _stored_user_input_parts(message.get("content"))
+        if not content:
+            return []
         if _is_hidden_user_message(text, scope):
             return [TurnBoundaryEvent(created_at=created_at, **scope)]
-        return [UserMessageEvent(created_at=created_at, text=text, target_agent_code=owner_code)]
+        return [UserMessageEvent(
+            created_at=created_at,
+            content=content,
+            display_text=display_text_from_content(content),
+            target_agent_code=owner_code,
+        )]
+    if not text:
+        return []
     if role == "assistant":
         return [
             TextCompleteEvent(
@@ -347,6 +361,47 @@ def _stored_message_text_parts(content: Any) -> list[str]:
         if isinstance(text, str) and item.get("type") in _TEXT_CONTENT_TYPES:
             parts.append(text)
     return [part for part in parts if part]
+
+
+def _stored_user_input_parts(content: Any) -> list[AgentInputPart]:
+    if isinstance(content, str):
+        stripped = content.strip()
+        return [AgentTextInputPart(text=stripped)] if stripped else []
+    if not isinstance(content, list):
+        return []
+    parts: list[AgentInputPart] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in _TEXT_CONTENT_TYPES:
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(AgentTextInputPart(text=text.strip()))
+            continue
+        if item_type == "input_image":
+            image_part = _stored_image_part(item)
+            if image_part is not None:
+                parts.append(image_part)
+    return parts
+
+
+def _stored_image_part(item: dict[str, Any]) -> AgentImageInputPart | None:
+    image_url = item.get("image_url")
+    if not isinstance(image_url, str) or not image_url.startswith("data:"):
+        return None
+    header, separator, data = image_url.partition(",")
+    if separator != "," or ";base64" not in header:
+        return None
+    media_type = header.removeprefix("data:").split(";", 1)[0]
+    try:
+        return AgentImageInputPart(
+            media_type=AgentImageMediaTypeSchema(media_type),
+            data=data,
+            detail=AgentImageDetailSchema(str(item.get("detail") or "auto")),
+        )
+    except ValueError:
+        return None
 
 
 def _stored_reasoning_parts(message: dict[str, Any]) -> list[tuple[str, int, str]]:

@@ -58,6 +58,53 @@
           }
         ]
       },
+      "AgentImageDetailSchema": {
+        "enum": [
+          "auto",
+          "low",
+          "high"
+        ],
+        "title": "AgentImageDetailSchema",
+        "type": "string"
+      },
+      "AgentImageInputPart": {
+        "properties": {
+          "data": {
+            "maxLength": 5242880,
+            "minLength": 1,
+            "title": "Data",
+            "type": "string"
+          },
+          "detail": {
+            "$ref": "#/components/schemas/AgentImageDetailSchema",
+            "default": "auto"
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/AgentImageMediaTypeSchema"
+          },
+          "type": {
+            "const": "image",
+            "default": "image",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "title": "AgentImageInputPart",
+        "type": "object"
+      },
+      "AgentImageMediaTypeSchema": {
+        "enum": [
+          "image/png",
+          "image/jpeg",
+          "image/webp"
+        ],
+        "title": "AgentImageMediaTypeSchema",
+        "type": "string"
+      },
       "AgentInfoSchema": {
         "properties": {
           "code": {
@@ -261,6 +308,29 @@
             "default": null,
             "title": "Agent Code"
           },
+          "content": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "image": "#/components/schemas/AgentImageInputPart",
+                  "text": "#/components/schemas/AgentTextInputPart"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AgentTextInputPart"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentImageInputPart"
+                }
+              ]
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Content",
+            "type": "array"
+          },
           "sandbox_container_id": {
             "anyOf": [
               {
@@ -274,14 +344,10 @@
             "default": null,
             "description": "Selected running sandbox container. Backend mounts sandbox tools only when this container is still usable by the current user.",
             "title": "Sandbox Container Id"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
           }
         },
         "required": [
-          "text"
+          "content"
         ],
         "title": "AgentStreamSendCommand",
         "type": "object"
@@ -295,6 +361,27 @@
         ],
         "title": "AgentSubordinateStatus",
         "type": "string"
+      },
+      "AgentTextInputPart": {
+        "properties": {
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text",
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AgentTextInputPart",
+        "type": "object"
       },
       "Body_upload_container_files_route_api_sandbox_containers__id__files_upload_post": {
         "properties": {
@@ -2599,18 +2686,41 @@
       },
       "UserMessageEvent": {
         "properties": {
+          "content": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "image": "#/components/schemas/AgentImageInputPart",
+                  "text": "#/components/schemas/AgentTextInputPart"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AgentTextInputPart"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentImageInputPart"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "Content",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
+          "display_text": {
+            "default": "",
+            "title": "Display Text",
+            "type": "string"
+          },
           "target_agent_code": {
             "default": "",
             "title": "Target Agent Code",
-            "type": "string"
-          },
-          "text": {
-            "title": "Text",
             "type": "string"
           },
           "type": {
@@ -2622,7 +2732,7 @@
         },
         "required": [
           "created_at",
-          "text"
+          "content"
         ],
         "title": "UserMessageEvent",
         "type": "object"

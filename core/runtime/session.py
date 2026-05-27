@@ -14,7 +14,7 @@ from config import get_config
 from core.agent.registry import AgentRegistry, AgentToolSnapshot, SessionAgentGraph
 from core.runtime.context import AgentRuntimeContext, main_agent_instance_id
 from core.runtime.events import SdkStreamEventNormalizer
-from core.runtime.input_items import build_user_message_item
+from core.runtime.input_items import build_user_message_item, display_text_from_content, text_input_content
 from core.runtime.live_projection import LiveEventProjection
 from core.runtime.partial_context import DeltaBuffer, flush_partial_context, track_delta
 from core.conversation.store import Z3r0Session
@@ -30,6 +30,7 @@ from schema.agent.events import (
     RunStateEvent,
     UserMessageEvent,
 )
+from schema.agent.events import AgentInputPart
 from schema.agent.notifications import AgentNotificationSnapshot
 from service.agent import notifications as agent_notifications
 
@@ -70,7 +71,7 @@ class AgentSession:
     def unsubscribe(self, queue: asyncio.Queue[AgentEventSchema]) -> None:
         self._subscribers.discard(queue)
 
-    async def start_turn(self, text: str, agent_code: str, context: AgentRuntimeContext) -> None:
+    async def start_turn(self, content: list[AgentInputPart], agent_code: str, context: AgentRuntimeContext) -> None:
         async with self._start_lock:
             if self.is_running():
                 await self.interrupt()
@@ -82,7 +83,7 @@ class AgentSession:
             )
             self._begin_live_projection()
             task = asyncio.create_task(
-                self._run_background_turn(text, agent_code, context),
+                self._run_background_turn(content, agent_code, context),
                 name=f"agent-turn-{self.session_id}",
             )
             self._current_task = task
@@ -129,7 +130,7 @@ class AgentSession:
         saw_error = False
         try:
             async for event in self._run_turn(
-                notification_prompt(notification),
+                text_input_content(notification_prompt(notification)),
                 agent_code,
                 notification_context,
                 emit_user_message=False,
@@ -211,7 +212,7 @@ class AgentSession:
 
     async def _run_turn(
         self,
-        text: str,
+        content: list[AgentInputPart],
         agent_code: str,
         context: AgentRuntimeContext,
         *,
@@ -222,8 +223,14 @@ class AgentSession:
         if not context.agent_instance_id:
             context.agent_instance_id = main_agent_instance_id(context.session_id, context.user.id, agent_code)
         agent = graph.get(agent_code)
+        display_text = display_text_from_content(content)
         if emit_user_message:
-            yield UserMessageEvent(created_at=datetime.now(), text=text, target_agent_code=agent_code)
+            yield UserMessageEvent(
+                created_at=datetime.now(),
+                content=content,
+                display_text=display_text,
+                target_agent_code=agent_code,
+            )
 
         memory_session = Z3r0Session(
             session_id=self.session_id,
@@ -243,7 +250,7 @@ class AgentSession:
             try:
                 normalizer = SdkStreamEventNormalizer()
                 max_turns = get_config().agent_runtime.main_max_turns
-                user_input = [build_user_message_item(text)]
+                user_input = [build_user_message_item(content)]
                 agent_config = get_config().agents.get(agent_code)
                 if agent_config is not None:
                     await memory_session.compact_if_needed(
@@ -258,14 +265,27 @@ class AgentSession:
                     max_turns=max_turns,
                 )
                 result_holder["result"] = stream
-                async for sdk_event in stream.stream_events():
-                    if isinstance(sdk_event, AgentUpdatedStreamEvent):
-                        continue
-                    event = normalizer.event_from_sdk_stream(sdk_event, agent.name)
-                    if event is not None:
-                        queue.put_nowait(event)
+                async def _consume_stream_events() -> None:
+                    sdk_events = stream.stream_events().__aiter__()
+                    timeout = get_config().agent_runtime.model_stream_idle_timeout_seconds
+                    while True:
+                        try:
+                            sdk_event = await asyncio.wait_for(sdk_events.__anext__(), timeout=timeout)
+                        except StopAsyncIteration:
+                            break
+                        if isinstance(sdk_event, AgentUpdatedStreamEvent):
+                            continue
+                        event = normalizer.event_from_sdk_stream(sdk_event, agent.name)
+                        if event is not None:
+                            queue.put_nowait(event)
+
+                await _consume_stream_events()
             except asyncio.CancelledError:
                 raise
+            except TimeoutError:
+                message = "model stream was idle for too long before returning output"
+                logger.warning("agent stream idle timeout session=%s agent=%s", self.session_id, agent_code)
+                queue.put_nowait(ErrorEvent(created_at=datetime.now(), agent_name=agent.name, message=message))
             except Exception as exc:
                 logger.exception("agent stream failed: %s", exc)
                 queue.put_nowait(ErrorEvent(created_at=datetime.now(), agent_name=agent.name, message=str(exc)))
@@ -340,7 +360,7 @@ class AgentSession:
 
     async def _run_background_turn(
         self,
-        text: str,
+        content: list[AgentInputPart],
         agent_code: str,
         context: AgentRuntimeContext,
     ) -> None:
@@ -351,7 +371,7 @@ class AgentSession:
             saw_done = False
             canceled = False
             try:
-                async for event in self._run_turn(text, agent_code, context):
+                async for event in self._run_turn(content, agent_code, context):
                     if isinstance(event, DoneEvent):
                         saw_done = True
                     await self._publish(event)

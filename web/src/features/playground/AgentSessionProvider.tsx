@@ -20,6 +20,7 @@ import { showApiError, showApiSuccess } from "../../shared/api/feedback";
 import { getStoredAccessToken } from "../../shared/auth/session";
 import type {
   AgentInfo,
+  AgentInputPart,
   AgentSessionSummary,
   AgentStreamCommand,
   AgentStreamEvent,
@@ -76,7 +77,7 @@ type AgentSessionContextValue = {
   getSessionAgentCode: (sessionId: string | null) => string;
   setSessionAgentCode: (sessionId: string, code: string) => void;
 
-  send: (text: string, sandboxContainerId?: number | null, sessionId?: string | null) => Promise<void>;
+  send: (content: AgentInputPart[], sandboxContainerId?: number | null, sessionId?: string | null) => Promise<void>;
   interrupt: (sessionId?: string | null) => Promise<void>;
   cancelAll: (sessionId?: string | null) => Promise<void>;
 };
@@ -109,7 +110,7 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
   const pendingLiveEventsRef = useRef<Map<string, AgentStreamEvent[]>>(new Map());
   const pendingSendRef = useRef<{
     sessionId: string;
-    text: string;
+    content: AgentInputPart[];
     sandboxContainerId: number | null;
     agentCode: string;
   } | null>(null);
@@ -267,7 +268,7 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const onTerminate = () => {
+    const onTerminate = (event: CloseEvent | Event) => {
       if (socketsRef.current.get(sessionId) !== socket) return;
       socketsRef.current.delete(sessionId);
       clearIdleTimer(sessionId);
@@ -276,7 +277,17 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
       updateRuntime(sessionId, (r) => ({
         ...r,
         status: "closed",
-        state: disconnectChatTurn(r.state),
+        state: r.state.streaming
+          ? finishChatTurn(streamReduce(r.state, {
+              type: "error",
+              created_at: new Date().toISOString(),
+              agent_name: "",
+              nested_for: "",
+              nested_call_id: "",
+              message: websocketCloseMessage(event),
+              code: "connection_closed",
+            }))
+          : disconnectChatTurn(r.state),
       }));
     };
     socket.addEventListener("close", onTerminate);
@@ -463,18 +474,18 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
     setPendingAgentCode("");
     sendCommand(activeSessionId, {
       action: "send",
-      text: queued.text,
+      content: queued.content,
       sandbox_container_id: queued.sandboxContainerId,
       agent_code: queued.agentCode || null,
     }).catch(showApiError);
   }, [activeSessionId, runtimes, sendCommand, updateRuntime]);
 
-  const send = useCallback(async (text: string, sandboxContainerId: number | null = null, sessionId: string | null = activeSessionId) => {
+  const send = useCallback(async (content: AgentInputPart[], sandboxContainerId: number | null = null, sessionId: string | null = activeSessionId) => {
     const agentCode = getSessionAgentCode(sessionId);
     if (sessionId) {
       await sendCommand(sessionId, {
         action: "send",
-        text,
+        content,
         sandbox_container_id: sandboxContainerId,
         agent_code: agentCode || null,
       });
@@ -486,7 +497,7 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
       const id = response.data?.session_id ?? null;
       if (!id) return;
       initRuntime(id);
-      pendingSendRef.current = { sessionId: id, text, sandboxContainerId, agentCode };
+      pendingSendRef.current = { sessionId: id, content, sandboxContainerId, agentCode };
       manualBlankSessionRef.current = false;
       setActiveSessionId(id);
     } catch (error) {
@@ -573,4 +584,15 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
   ]);
 
   return <AgentSessionContext.Provider value={value}>{children}</AgentSessionContext.Provider>;
+}
+
+function websocketCloseMessage(event: CloseEvent | Event): string {
+  if (event instanceof CloseEvent) {
+    if (event.reason) return `Agent stream connection closed: ${event.reason}`;
+    if (event.code === 1009) return "Agent stream connection closed because the image payload is too large";
+    if (event.code !== 1000 && event.code !== 1005) {
+      return `Agent stream connection closed unexpectedly (code ${event.code})`;
+    }
+  }
+  return "Agent stream connection closed before the model returned output";
 }

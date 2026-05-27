@@ -156,6 +156,9 @@ export type AgentSubordinateStatus = components["schemas"]["AgentSubordinateStat
 export type ErrorEvent = components["schemas"]["ErrorEvent"];
 export type DoneEvent = components["schemas"]["DoneEvent"];
 export type RunStateEvent = components["schemas"]["RunStateEvent"];
+export type AgentInputPart = components["schemas"]["AgentTextInputPart"] | components["schemas"]["AgentImageInputPart"];
+export type AgentTextInputPart = components["schemas"]["AgentTextInputPart"];
+export type AgentImageInputPart = components["schemas"]["AgentImageInputPart"];
 
 export type AgentContentEvent = ListAgentEventsData["items"][number];
 export type AgentStreamEvent = components["schemas"]["AgentEventSchema"];

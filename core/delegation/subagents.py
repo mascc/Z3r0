@@ -15,7 +15,7 @@ from agents.stream_events import AgentUpdatedStreamEvent
 from config import get_config
 from core.runtime.context import AgentRuntimeContext, subagent_instance_id
 from core.runtime.events import SdkStreamEventNormalizer
-from core.runtime.input_items import build_user_message_item
+from core.runtime.input_items import build_user_message_item, text_input_content
 from core.runtime.live_projection import LiveEventProjection
 from core.runtime.partial_context import DeltaBuffer, flush_partial_context, track_delta
 from core.sandbox.command_jobs import cancel_agent_async_sandbox_commands
@@ -24,6 +24,7 @@ from database import get_engine
 from logger import get_logger
 from schema.agent.events import (
     AgentEventSchema,
+    AgentInputPart,
     ErrorEvent,
     RunStateEvent,
     SubagentTaskEvent,
@@ -483,12 +484,13 @@ async def _run_subagent_task(
         max_turns = get_config().agent_runtime.subordinate_max_turns
         agent_config = get_config().agents.get(snapshot.agent_code)
         if agent_config is not None:
+            brief_content = text_input_content(snapshot.brief)
             await memory_session.compact_if_needed(
                 agent_config=agent_config,
-                incoming_items=[build_user_message_item(snapshot.brief)],
+                incoming_items=[build_user_message_item(brief_content)],
             )
         result = await _run_subagent_turn(
-            prompt=snapshot.brief,
+            content=text_input_content(snapshot.brief),
             snapshot=snapshot,
             child_agent=child_agent,
             memory_session=memory_session,
@@ -549,7 +551,7 @@ async def _run_subagent_task(
 
 async def _run_subagent_turn(
     *,
-    prompt: str,
+    content: list[AgentInputPart],
     snapshot: AgentSubordinateTaskSnapshot,
     child_agent: Agent,
     memory_session: Z3r0Session,
@@ -557,7 +559,7 @@ async def _run_subagent_turn(
     max_turns: int,
     buffers: dict[str, DeltaBuffer],
 ) -> Any:
-    user_input = [build_user_message_item(prompt)]
+    user_input = [build_user_message_item(content)]
     stream = Runner.run_streamed(
         starting_agent=child_agent,
         input=user_input,
@@ -567,19 +569,31 @@ async def _run_subagent_turn(
     )
     normalizer = SdkStreamEventNormalizer()
     try:
-        async for sdk_event in stream.stream_events():
-            if isinstance(sdk_event, AgentUpdatedStreamEvent):
-                continue
-            event = normalizer.event_from_sdk_stream(sdk_event, child_agent.name)
-            if event is None:
-                continue
-            track_delta(buffers, event)
-            tagged = _tag_nested(event, snapshot)
-            await publish_subagent_event(snapshot.session_id, tagged)
-            await _update_progress_from_event(snapshot, event)
+        async def _consume_stream_events() -> None:
+            sdk_events = stream.stream_events().__aiter__()
+            timeout = get_config().agent_runtime.model_stream_idle_timeout_seconds
+            while True:
+                try:
+                    sdk_event = await asyncio.wait_for(sdk_events.__anext__(), timeout=timeout)
+                except StopAsyncIteration:
+                    break
+                if isinstance(sdk_event, AgentUpdatedStreamEvent):
+                    continue
+                event = normalizer.event_from_sdk_stream(sdk_event, child_agent.name)
+                if event is None:
+                    continue
+                track_delta(buffers, event)
+                tagged = _tag_nested(event, snapshot)
+                await publish_subagent_event(snapshot.session_id, tagged)
+                await _update_progress_from_event(snapshot, event)
+
+        await _consume_stream_events()
     except asyncio.CancelledError:
         await flush_partial_context(stream, memory_session, buffers, log_label="subagent")
         raise
+    except TimeoutError:
+        await flush_partial_context(stream, memory_session, buffers, log_label="subagent")
+        raise RuntimeError("model stream was idle for too long before returning output")
     except Exception:
         await flush_partial_context(stream, memory_session, buffers, log_label="subagent")
         raise
