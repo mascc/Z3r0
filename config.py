@@ -66,7 +66,7 @@ class AgentPoolConfig(StrictConfigModel):
 class AgentRuntimeConfig(StrictConfigModel):
     main_max_turns: int = Field(default=1000, ge=1)
     subordinate_max_turns: int = Field(default=1000, ge=1)
-    model_stream_idle_timeout_seconds: int = Field(default=180, ge=30)
+    model_stream_idle_timeout_seconds: int = Field(default=300, ge=30)
     context_compression_enabled: bool = True
     context_compression_trigger_ratio: float = Field(default=0.95, gt=0, lt=1)
     context_compression_hard_stop_ratio: float = Field(default=0.98, gt=0, lt=1)
