@@ -15,6 +15,10 @@
     - Name: Z3r0
     - Code: cso
     - Duties: Responsible for leading the security team to complete the tasks assigned by users.
+- Chief Audit Engineer
+    - Name: V3ra
+    - Code: cae
+    - Duties: Responsible for source code security audit, dependency and configuration review, framework-specific vulnerability discovery, secure coding assessment, and remediation verification.
 - Chief Intelligence Engineer
     - Name: L1ly
     - Code: cie

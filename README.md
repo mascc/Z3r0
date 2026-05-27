@@ -28,7 +28,7 @@ Z3r0 is a controlled multi-agent workbench for authorized security assessment, c
 ## Design Principles
 
 - **Authorized operation first**: Z3r0 is designed for approved internal assessments, code review, training, and controlled research environments.
-- **Clear role boundaries**: a coordinator decomposes the task, while specialist agents handle intelligence, penetration validation, reverse engineering, and cryptographic review within defined scopes.
+- **Clear role boundaries**: a coordinator decomposes the task, while specialist agents handle intelligence, penetration validation, code audit, reverse engineering, and cryptographic review within defined scopes.
 - **Traceable work**: sessions, tool calls, delegation jobs, and streamed events are persisted so reviews can be resumed and audited.
 - **Controlled execution**: command execution, browser access, file management, and GUI tooling run through bound Docker sandboxes.
 - **Model abstraction**: model access is kept behind runtime and role interfaces, with support for LiteLLM and OpenAI-compatible providers.
@@ -71,6 +71,7 @@ The system is organized into explicit layers: user-facing workbench, API boundar
 | Code | Name | Role | Responsibility |
 | --- | --- | --- | --- |
 | `cso` | Z3r0 | Chief Security Officer | Task decomposition, coordination, result integration |
+| `cae` | V3ra | Chief Audit Engineer | Source code audit, dependency review, remediation verification |
 | `cie` | L1ly | Chief Intelligence Engineer | Intelligence collection, asset mapping, relationship analysis |
 | `cpe` | Fr4nk | Chief Penetration Engineer | Penetration testing, vulnerability validation, risk verification |
 | `cre` | J4m3 | Chief Reverse Engineer | File, binary, firmware, and APK reverse engineering |
@@ -79,11 +80,13 @@ The system is organized into explicit layers: user-facing workbench, API boundar
 ```mermaid
 flowchart TB
   CSO["cso / Z3r0"]
+  CSO --> CAE["cae / V3ra<br/>Code Audit"]
   CSO --> CIE["cie / L1ly<br/>Intelligence"]
   CSO --> CPE["cpe / Fr4nk<br/>Penetration"]
   CSO --> CRE["cre / J4m3<br/>Reverse"]
   CSO --> CCE["cce / Nu1L<br/>Cryptography"]
 
+  CAE --> A1["Knowledge and Sandbox Tools"]
   CIE --> K1["Knowledge and Sandbox Tools"]
   CPE --> S1["Knowledge and Sandbox Tools"]
   CRE --> S2["Knowledge and Sandbox Tools"]

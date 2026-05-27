@@ -28,7 +28,7 @@ Z3r0 是一个面向授权安全评估、代码审计、内部复核和受控研
 ## 设计原则
 
 - **授权优先**：面向经过批准的内部评估、代码审计、培训和受控研究环境。
-- **职责清晰**：主控 Agent 负责任务拆解和结果整合，专业 Agent 分别处理情报、渗透验证、逆向分析和密码学审查。
+- **职责清晰**：主控 Agent 负责任务拆解和结果整合，专业 Agent 分别处理情报搜集、渗透验证、代码审计、逆向分析和密码学审查。
 - **过程追踪**：会话、工具调用、委派任务和流式事件持久化存储，便于恢复、审计和复核。
 - **执行受控**：命令执行、浏览器、文件管理和图形工具均通过绑定的 Docker 沙箱提供。
 - **模型解耦**：模型访问收敛在运行时和角色接口之后，支持 LiteLLM 与 OpenAI 兼容模型服务。
@@ -71,6 +71,7 @@ flowchart TB
 | Code | Name | Role | 主要职责 |
 | --- | --- | --- | --- |
 | `cso` | Z3r0 | Chief Security Officer | 任务拆解、团队协调、结果整合 |
+| `cae` | V3ra | Chief Audit Engineer | 代码审计、依赖审查、修复复核 |
 | `cie` | L1ly | Chief Intelligence Engineer | 情报收集、资产梳理、关系分析 |
 | `cpe` | Fr4nk | Chief Penetration Engineer | 渗透测试、漏洞验证、风险确认 |
 | `cre` | J4m3 | Chief Reverse Engineer | 文件、二进制、固件、APK 逆向 |
@@ -79,11 +80,13 @@ flowchart TB
 ```mermaid
 flowchart TB
   CSO["cso / Z3r0"]
+  CSO --> CAE["cae / V3ra<br/>Code Audit"]
   CSO --> CIE["cie / L1ly<br/>Intelligence"]
   CSO --> CPE["cpe / Fr4nk<br/>Penetration"]
   CSO --> CRE["cre / J4m3<br/>Reverse"]
   CSO --> CCE["cce / Nu1L<br/>Cryptography"]
 
+  CAE --> A1["Knowledge and Sandbox Tools"]
   CIE --> K1["Knowledge and Sandbox Tools"]
   CPE --> S1["Knowledge and Sandbox Tools"]
   CRE --> S2["Knowledge and Sandbox Tools"]

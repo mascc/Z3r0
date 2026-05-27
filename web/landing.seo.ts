@@ -3,7 +3,7 @@ export const landingSeo = {
   siteName: "Z3r0",
   title: "Z3r0 - Multi-Agent Security Workbench for Authorized Assessment, Code Audit, and Controlled Research",
   description:
-    "Z3r0 is a controlled multi-agent security workbench for authorized security assessment, code auditing, internal review, reverse engineering review, cryptography review, and controlled research.",
+    "Z3r0 is a controlled multi-agent security workbench for authorized security assessment, code auditing, dependency review, internal review, reverse engineering review, cryptography review, and controlled research.",
   imagePath: "assets/z3r0-logo.png",
   imageAlt: "Z3r0 logo",
   keywords: [
@@ -12,6 +12,8 @@ export const landingSeo = {
     "AI security agent platform",
     "authorized security assessment",
     "code audit automation",
+    "source code security audit",
+    "dependency review",
     "vulnerability validation",
     "Docker sandbox assessment",
     "security research workbench",
