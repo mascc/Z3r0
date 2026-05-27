@@ -244,8 +244,8 @@
 
 .landing-capability-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: minmax(128px, auto);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(118px, auto);
   gap: 10px;
 }
 
@@ -265,8 +265,6 @@
 }
 
 .landing-capability-cell:first-child {
-  grid-column: 1 / -1;
-  min-height: 128px;
   background:
     linear-gradient(90deg, rgba(217, 45, 58, 0.18), rgba(7, 11, 18, 0.6)),
     rgba(7, 11, 18, 0.58);
@@ -599,7 +597,7 @@
 
 .landing-agent-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -779,6 +777,10 @@
   .landing-capability-matrix {
     width: min(100%, 520px);
     justify-self: center;
+  }
+
+  .landing-capability-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .landing-layer-grid-execution {
