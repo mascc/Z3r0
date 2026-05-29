@@ -73,7 +73,6 @@ At most 3 async commands may run for one agent instance.
 
 Call custom skill scripts by absolute path:
 
-- crt.sh wrapper: `/root/.agents/skills/crt.sh/scripts/crt.sh`
 - Ghidra wrapper: `/root/.agents/skills/ghidra/scripts/ghidra-analyze.sh`
 
 Report only meaningful results: changed files, commands run, relevant output, and failures that affect completion.

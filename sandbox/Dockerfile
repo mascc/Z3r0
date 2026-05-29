@@ -116,8 +116,7 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*; \
     find /tmp/.agents/skills -path '*/scripts/*.sh' -type f -exec chmod 755 '{}' +; \
     chmod 755 /tmp/.agents/validate-skills.sh; \
-    /tmp/.agents/validate-skills.sh /tmp/.agents/skills; \
-    /tmp/.agents/skills/crt.sh/scripts/crt.sh --help >/dev/null
+    /tmp/.agents/validate-skills.sh /tmp/.agents/skills
 
 # Final sandbox runtime image.
 FROM debian:trixie-slim

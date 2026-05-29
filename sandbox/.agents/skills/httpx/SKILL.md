@@ -10,7 +10,7 @@ Use ProjectDiscovery `httpx` for authorized HTTP probing of in-scope hosts and U
 ## Use When
 
 - A domain, host, URL, or recon output list needs HTTP/HTTPS liveness validation.
-- Results from `crt.sh`, DNS, `nmap`, or user-provided target lists need status code, title, redirect, header, TLS, or technology triage.
+- Results from DNS, `nmap`, or user-provided target lists need status code, title, redirect, header, TLS, or technology triage.
 - A large target list needs normalized output before deeper browser review, fingerprinting, or vulnerability validation.
 
 ## Usage Rules

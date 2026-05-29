@@ -12,7 +12,7 @@ Skill name is `observer-ward`; the installed CLI command is `observer_ward`.
 ## Use When
 
 - The task needs web application or service fingerprinting for in-scope targets.
-- Reconnaissance output from `crt.sh`, DNS, browser review, HTTP probing, or user-provided URLs needs product or technology identification.
+- Reconnaissance output from DNS, browser review, HTTP probing, or user-provided URLs needs product or technology identification.
 - A target list needs lightweight fingerprint triage before deeper validation.
 - A finding needs supporting evidence such as matched product name, version, status, title, certificate data, request/response data, or matched probe output.
 
