@@ -814,6 +814,7 @@
   grid-template-rows: max-content minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -830,9 +831,11 @@
 
 .project-info-scroll-list {
   display: grid;
+  align-content: start;
+  height: 100%;
   gap: 8px;
-  max-height: min(240px, 30vh);
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-color: #b8c6d6 transparent;
@@ -849,6 +852,7 @@
 
 .project-info-assets > div,
 .project-info-task-row {
+  box-sizing: border-box;
   min-width: 0;
   min-height: 30px;
   padding: 5px 0 7px;
@@ -856,27 +860,29 @@
 }
 
 .project-info-assets > div {
-  overflow: hidden;
   color: #26344d;
   font-size: 13px;
   line-height: 1.65;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .project-info-task-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content 86px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) max-content minmax(72px, 86px);
+  align-items: start;
   gap: 8px;
 }
 
 .project-info-task-row > span {
   min-width: 0;
-  overflow: hidden;
   font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.project-info-task-row .semi-progress {
+  min-width: 0;
+  padding-top: 3px;
 }
 
 .project-info-summary {
