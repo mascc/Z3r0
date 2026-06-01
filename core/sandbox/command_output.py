@@ -146,7 +146,6 @@ def validate_output_path(output_file: str) -> str:
 
 
 def _base_command_script(command: str, output_path: str) -> list[str]:
-    quoted_command = shlex.quote(command)
     quoted_output_dir = shlex.quote(OUTPUT_DIR)
     quoted_output_path = shlex.quote(output_path)
     return [
@@ -156,13 +155,17 @@ def _base_command_script(command: str, output_path: str) -> list[str]:
         'mkdir -p "$output_dir" || exit 125',
         'rm -f "$output_path"',
         ': > "$output_path" || exit 125',
-        f"/bin/sh -lc {quoted_command} > \"$output_path\" 2>&1 &",
+        f"{_bash_command(command)} > \"$output_path\" 2>&1 &",
         "command_pid=$!",
         'trap \'kill -TERM "$command_pid" 2>/dev/null\' TERM INT HUP',
         'wait "$command_pid"',
         "command_exit_code=$?",
         "trap - TERM INT HUP",
     ]
+
+
+def _bash_command(command: str) -> str:
+    return f"/bin/bash -lc {shlex.quote(command)}"
 
 
 def _stat_output_lines(quoted_output_path: str) -> tuple[str, ...]:

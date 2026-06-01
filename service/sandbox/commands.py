@@ -251,18 +251,18 @@ def _decode_command_output_parts(parts: list[bytes | str]) -> str:
 
 def _wrap_cancellable_command(command: str, marker_path: str) -> str:
     marker = shlex.quote(marker_path)
-    quoted_command = shlex.quote(command)
+    shell_command = _bash_command(command)
     group_inner = (
         f"rm -f {marker}; "
         f"printf '%s' \"$$\" > {marker}; "
-        f"/bin/sh -lc {quoted_command} & "
+        f"{shell_command} & "
         "pid=$!; wait \"$pid\"; code=$?; "
         f"rm -f {marker}; "
         "exit \"$code\""
     )
     child_inner = (
         f"rm -f {marker}; "
-        f"/bin/sh -lc {quoted_command} & "
+        f"{shell_command} & "
         "pid=$!; "
         f"printf '%s' \"$pid\" > {marker}; "
         "wait \"$pid\"; code=$?; "
@@ -277,6 +277,10 @@ def _wrap_cancellable_command(command: str, marker_path: str) -> str:
         f"exec /bin/sh -lc {shlex.quote(child_inner)}; "
         "fi"
     )
+
+
+def _bash_command(command: str) -> str:
+    return f"/bin/bash -lc {shlex.quote(command)}"
 
 
 def _build_command_termination_script(marker_path: str) -> str:
