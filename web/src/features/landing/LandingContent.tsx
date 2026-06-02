@@ -16,6 +16,7 @@ import {
   LockKeyhole,
   MessageSquareCode,
   Network,
+  Repeat2,
   ShieldCheck,
   SquareTerminal,
   Workflow,
@@ -88,13 +89,37 @@ const architectureNodes: ArchitectureNode[] = [
     id: "runtime",
     label: "Agent Runtime",
     role: "Orchestration Layer",
-    detail: "The runtime coordinates session lifecycle, interrupt-driven task execution, context projection, event normalization, and compaction.",
+    detail: "The runtime coordinates session lifecycle, interrupt-driven task execution, context projection, event normalization, timeline persistence, and compaction.",
     points: [
-      "Creates or resumes sessions through AgentSessionPool and persists turn state.",
-      "Uses run_until_idle and iter_interruptible_events to race SDK streams against notification signals, raising InterruptSignal with CPU-interrupt-style atomicity that defers preemption until pending tool calls complete.",
-      "Projects shared history into role-specific views and normalizes SDK events into stable application events.",
+      "Creates or resumes sessions through AgentSessionPool and launches non-blocking instance drivers.",
+      "Uses run_until_idle to run the initial turn, drain ready notifications, then stop without waiting on background work.",
+      "Normalizes SDK output into stable application events and writes persistable frames to the timeline log.",
     ],
     icon: Workflow,
+  },
+  {
+    id: "drivers",
+    label: "Instance Drivers",
+    role: "Async Scheduling Layer",
+    detail: "Main and subagent instances are driven by short-lived, resumable loops that wake only when work is ready.",
+    points: [
+      "Main drivers stop after draining PENDING notifications instead of blocking on child work.",
+      "Subagent drivers can relaunch after a claim race, go dormant while children run, or complete the task.",
+      "Long sandbox commands resume the owning instance through the same notification path.",
+    ],
+    icon: Repeat2,
+  },
+  {
+    id: "notifications",
+    label: "Notification Obligations",
+    role: "Liveness Layer",
+    detail: "The notification table is the scheduler state for user messages, subagent completion, and sandbox async jobs.",
+    points: [
+      "AWAITING represents a background obligation that is still running.",
+      "PENDING wakes the owning instance so it can integrate the result.",
+      "PROCESSING, COMPLETED, FAILED, and CANCELED make cancellation and liveness checks deterministic.",
+    ],
+    icon: Zap,
   },
   {
     id: "agentGraph",
@@ -114,8 +139,8 @@ const architectureNodes: ArchitectureNode[] = [
     role: "Review Layer",
     detail: "The persisted record connects conclusions to streamed events, tool evidence, subagent output, and durable facts.",
     points: [
-      "Keeps messages, metadata, delegated jobs, notifications, and stable facts reviewable.",
-      "Supports resumed reviews and post-assessment review.",
+      "Keeps messages, metadata, delegated jobs, async command results, notifications, timeline events, and stable facts reviewable.",
+      "Supports live refresh, resumed reviews, and post-assessment review.",
       "Helps operators distinguish confirmed findings, assumptions, residual risk, and next actions.",
     ],
     icon: FileCheck2,
@@ -139,8 +164,8 @@ const architectureNodes: ArchitectureNode[] = [
     detail: "Tool mounting translates sandbox, knowledge, and skill capabilities into explicit agent-callable interfaces.",
     points: [
       "Separates unavailable tools from the active agent graph.",
-      "Supports synchronous commands, async command jobs, skills, and knowledge loading.",
-      "Keeps command output structured so it can be reasoned over and replayed.",
+      "Supports synchronous commands, turn-terminal async command dispatch, skills, and knowledge loading.",
+      "Keeps command output structured so completed output can be read and replayed.",
     ],
     icon: SquareTerminal,
   },
@@ -160,31 +185,31 @@ const architectureNodes: ArchitectureNode[] = [
     id: "store",
     label: "PostgreSQL Store",
     role: "Persistence Layer",
-    detail: "PostgreSQL stores sessions, messages, metadata, delegated jobs, sandbox records, users, and work projects.",
+    detail: "PostgreSQL stores sessions, messages, metadata, delegated jobs, async command jobs, notification obligations, event logs, sandbox records, users, and work projects.",
     points: [
       "Persists long-running assessments across browser refreshes and runtime recovery.",
-      "Stores subagent job state, completion notifications, and review metadata.",
+      "Stores subagent task state, async job state, completion obligations, and review metadata.",
       "Provides the durable source for replay, compaction, and operational audit.",
     ],
     icon: Database,
   },
   {
     id: "eventContract",
-    label: "Event Contract",
-    role: "Streaming Layer",
-    detail: "The event contract decouples frontend rendering from model and agent SDK internals.",
+    label: "Timeline Event Log",
+    role: "Streaming and Replay Layer",
+    detail: "The event contract and timeline log decouple frontend rendering from model and agent SDK internals.",
     points: [
       "Uses stable event types such as thinking_delta, text_delta, tool_call, and tool_result.",
-      "Carries subagent task updates and runtime notifications through one frontend protocol.",
-      "Lets backend implementation details evolve without changing the workbench event model.",
+      "Stamps sequence numbers and item keys so live frames and replayed frames share one identity space.",
+      "Upserts completed transcript items while keeping in-flight delta frames live-only.",
     ],
     icon: Activity,
   },
 ];
 
-const mainArchitectureNodeIds = ["operator", "workbench", "api", "runtime", "agentGraph", "record"];
+const mainArchitectureNodeIds = ["operator", "workbench", "api", "runtime", "drivers", "agentGraph", "record"];
 const executionLayerNodeIds = ["sandbox", "tools", "model"];
-const foundationLayerNodeIds = ["store", "eventContract"];
+const foundationLayerNodeIds = ["notifications", "eventContract", "store"];
 
 const agents = [
   {
@@ -250,17 +275,22 @@ const agents = [
 ];
 
 const runtimeSteps = [
-  { title: "Receive", text: "The operator submits a brief, target agent, and optional sandbox binding.", icon: MessageSquareCode },
-  { title: "Resume", text: "AgentSessionPool creates or resumes the active session.", icon: Layers3 },
-  { title: "Project", text: "Z3r0Session loads the scoped history view for each agent.", icon: FileSearch },
-  { title: "Stream", text: "Runtime output becomes thinking, text, tool, and subagent events.", icon: Activity },
-  { title: "Persist", text: "Messages, metadata, and durable facts are stored for replay.", icon: Database },
+  { title: "Start", text: "AgentSessionPool creates or resumes a session and launches the owning instance driver.", icon: Layers3 },
+  { title: "Drain", text: "run_until_idle executes the initial turn and every claimable PENDING notification for that instance.", icon: Activity },
+  { title: "Dispatch", text: "Subagents and async sandbox commands register AWAITING obligations, then the driver stops while they run.", icon: Database },
+  { title: "Terminal", text: "execute_async_command ends the current turn immediately, so agents cannot poll a running job.", icon: SquareTerminal },
+  { title: "Resume", text: "Completed or failed background work flips the obligation to PENDING and wakes the owning instance.", icon: Zap },
+  { title: "Replay", text: "Timeline events are stamped with seq values and item keys so refreshes read the same frames as live streams.", icon: FileSearch },
 ];
 
 const highlights = [
+  ["True Async Instance Drivers", "Main and subagent drivers drain ready turns, stop while background work runs, and relaunch only when integration work is ready."],
+  ["Notification Obligation Scheduler", "Subagent tasks and sandbox async jobs register AWAITING obligations atomically, then wake owners by flipping them to PENDING."],
+  ["Turn-terminal Async Commands", "Successful async command dispatch ends the agent turn immediately, preventing polling and making completion notification the only resume path."],
   ["Interrupt-driven Task Runtime", "A unified execution loop races SDK streams against notifications, preempting turns with CPU-interrupt-style atomicity while preserving tool-call safety."],
   ["Session-level Agent Graph", "Roles, tools, knowledge, and subagents are bound dynamically for each assessment session."],
-  ["Persistent Delegation Jobs", "Specialist work runs via the same executor, recovers from stale state, and signals the coordinator for immediate preemptive resume."],
+  ["Self-healing Delegation Drivers", "Specialist work can go dormant, recover from stale state, cancel live or dormant runs, and avoid hot relaunch loops."],
+  ["Durable Timeline Replay", "Persisted UI events use stable seq values and item keys, so replay no longer reconstructs transcript state from SDK messages."],
   ["Viewer-specific Projection", "Agents share persisted history while receiving context scoped to their responsibility."],
   ["Long-context Compaction", "Earlier history is summarized while recent context and durable facts remain available."],
   ["Stable Streaming Contract", "Frontend event schemas stay independent from model SDK internals."],
@@ -309,10 +339,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
         <div className="landing-capability-matrix" aria-label="Z3r0 capability matrix">
           <div className="landing-capability-header">
             <span className="page-eyebrow">Operating Model</span>
-            <strong>
-              Coordinator-led work with
-              <span>specialist execution and review paths.</span>
-            </strong>
+            <strong>Coordinator-led work with specialist execution and review paths.</strong>
           </div>
           <div className="landing-capability-disclaimer">
             <div className="landing-boundary-heading">
@@ -353,7 +380,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
         <div className="landing-section-heading">
           <span className="page-eyebrow">Architecture</span>
           <h2 id="architecture-title">Layered architecture for governed agent operations.</h2>
-          <p>Z3r0 separates the user-facing surface, API boundary, runtime orchestration, session agent graph, controlled execution, model access, streaming protocol, and persisted assessment record.</p>
+          <p>Z3r0 separates the user-facing surface, API boundary, runtime orchestration, async instance drivers, session agent graph, controlled execution, model access, notification-backed liveness, timeline replay, and persisted assessment records.</p>
         </div>
 
         <div className="landing-architecture-layout">
@@ -386,7 +413,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
             <div className="landing-architecture-layer landing-architecture-layer-foundation" aria-label="Persistence and streaming layer">
               <div className="landing-layer-title">
                 <span>Foundation</span>
-                <strong>Durable records and stable events keep long assessments reviewable.</strong>
+                <strong>Notification obligations, stable events, and durable storage keep long assessments recoverable.</strong>
               </div>
               <div className="landing-layer-grid landing-layer-grid-foundation">
                 {foundationLayerNodes.map((node) => (
@@ -439,7 +466,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
       <section id="runtime" className="landing-section landing-runtime" aria-labelledby="runtime-title">
         <div className="landing-section-heading">
           <span className="page-eyebrow">Runtime Flow</span>
-          <h2 id="runtime-title">Streaming sessions remain replayable, cancellable, and maintainable during long reviews.</h2>
+          <h2 id="runtime-title">Async drivers keep long reviews resumable without polling or blocking on background work.</h2>
         </div>
 
         <div className="landing-runtime-track">
@@ -461,7 +488,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
           <div>
             <span className="page-eyebrow">Sandbox Tooling</span>
             <h3>Agent tools and manual review share the same controlled execution boundary.</h3>
-            <p>Agents receive structured command results while users can open shell, screen, and file manager views for validation and review within an authorized scope.</p>
+            <p>Short commands return captured output metadata immediately. Long commands end the current agent turn and resume the owner only after terminal status and output metadata are available.</p>
           </div>
           <div className="landing-tool-cloud">
             {sandboxTools.map((tool) => <span key={tool}>{tool}</span>)}
@@ -472,7 +499,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
       <section className="landing-section landing-highlights" aria-labelledby="highlights-title">
         <div className="landing-section-heading">
           <span className="page-eyebrow">Technical Characteristics</span>
-          <h2 id="highlights-title">Runtime boundaries designed for controlled and reviewable security operations.</h2>
+          <h2 id="highlights-title">Runtime boundaries aligned to the current async scheduling implementation.</h2>
         </div>
         <div className="landing-highlight-grid">
           {highlights.map(([title, text], index) => (

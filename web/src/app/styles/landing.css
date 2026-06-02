@@ -213,10 +213,6 @@
   letter-spacing: 0;
 }
 
-.landing-capability-header strong span {
-  display: block;
-}
-
 .landing-capability-disclaimer {
   position: relative;
   z-index: 1;
@@ -318,7 +314,6 @@
   font-size: 23px;
   line-height: 1.1;
   letter-spacing: 0;
-  white-space: nowrap;
 }
 
 .landing-capability-cell strong {
@@ -645,8 +640,8 @@
 
 .landing-runtime-track {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 1px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .landing-runtime-step {
@@ -655,15 +650,7 @@
   gap: 12px;
   min-height: 210px;
   padding: 18px;
-  border-radius: 0;
-}
-
-.landing-runtime-step:first-child {
-  border-radius: 8px 0 0 8px;
-}
-
-.landing-runtime-step:last-child {
-  border-radius: 0 8px 8px 0;
+  border-radius: 8px;
 }
 
 .landing-runtime-heading {

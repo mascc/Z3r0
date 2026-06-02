@@ -41,7 +41,10 @@ flowchart TB
   Workbench["React Workbench<br/>Presentation Layer"]
   API["FastAPI API<br/>API Layer"]
   Runtime["Agent Runtime<br/>Orchestration Layer"]
+  Drivers["Instance Drivers<br/>Async Scheduling Layer"]
+  Notifications["Notification Obligations<br/>Liveness Layer"]
   Graph["Session Agent Graph<br/>Capability Layer"]
+  Timeline["Timeline Event Log<br/>Replay Layer"]
   Record["Assessment Record<br/>Review Layer"]
   Sandbox["Docker Sandbox<br/>Execution Layer"]
   Tools["Tool Surface<br/>Tool Layer"]
@@ -52,11 +55,16 @@ flowchart TB
   Operator --> Workbench
   Workbench -->|REST / WebSocket| API
   API --> Runtime
+  Runtime --> Drivers
   Runtime --> Graph
   Runtime --> Record
   Runtime --> Sandbox
   Runtime --> Events
   Runtime --> Store
+  Drivers --> Notifications
+  Notifications --> Runtime
+  Events --> Timeline
+  Timeline --> Store
   Graph --> Tools
   Graph --> Models
   Sandbox --> Tools
@@ -64,7 +72,7 @@ flowchart TB
   Events --> Workbench
 ```
 
-The system is organized into explicit layers: user-facing workbench, API boundary, runtime orchestration, session agent graph, controlled execution, model access, streaming event contract, and persisted assessment record. The backend owns authentication, session lifecycle, context projection, event normalization, delegation, sandbox binding, tool mounting, persistence, and history compaction. The frontend consumes stable REST and WebSocket contracts and does not depend on model SDK or provider internals.
+The system is organized into explicit layers: user-facing workbench, API boundary, runtime orchestration, resumable instance drivers, notification-backed liveness, session agent graph, controlled execution, model access, streaming event contract, durable timeline replay, and persisted assessment records. The backend owns authentication, session lifecycle, context projection, event normalization, delegation, sandbox binding, tool mounting, notification obligations, persistence, and history compaction. The frontend consumes stable REST and WebSocket contracts and does not depend on model SDK or provider internals.
 
 ## Agent Team
 
@@ -105,31 +113,43 @@ sequenceDiagram
   participant S as AgentSession
   participant TR as TaskRuntime
   participant A as Agent
+  participant N as Notifications
+  participant T as Timeline
   participant DB as PostgreSQL
 
   U->>W: send(text, agent_code, sandbox_id)
   W->>P: get_or_create(session_id)
   P->>S: start_turn(content)
+  S->>S: launch main instance driver
   S->>TR: run_until_idle(initial_content)
   TR->>DB: load projected history
   TR->>A: Runner.run_streamed()
   A-->>TR: iter_interruptible_events()
   TR-->>S: normalized events
   S-->>W: publish to subscribers
+  S->>T: stamp seq + upsert persistable event
+  T->>DB: timeline event log
   TR->>DB: persist messages + metadata
   W-->>U: thinking / text / tool / done
 
   Note over TR,A: Notification arrives during turn
   TR->>TR: InterruptSignal (deferred if tool pending)
   TR->>DB: flush_partial_context
-  TR->>TR: claim notification → new turn
+  TR->>N: claim PENDING notification
+  N-->>TR: notification prompt / user message
+  TR->>TR: run notification turn
+  S->>S: stop when no PENDING work; do not wait on AWAITING work
 ```
 
 Key runtime boundaries:
 
+- **Non-blocking instance drivers**: `AgentSession._drive` and `_SubagentDriver` run the optional initial turn, drain currently claimable notifications, then settle. Drivers stop while background work is still `AWAITING`; completion notifications relaunch the owning main or subagent instance when integration work is ready.
 - **Interrupt-driven task execution**: `run_until_idle` manages the agent turn lifecycle; `iter_interruptible_events` races the SDK event stream against notification signals and raises `InterruptSignal` at safe points (after pending tool calls complete), modeled after CPU interrupt masking for atomicity.
+- **Notification-backed liveness**: `AgentNotification` rows are the single source of truth for active work. `AWAITING` tracks running background obligations, `PENDING` wakes the owning agent, and `PROCESSING` marks a claimed notification turn.
+- **Turn-terminal async commands**: `execute_async_command` dispatches a sandbox command, returns only `status` and `run_id`, and `AgentRegistry` ends the turn immediately via `tool_use_behavior`. The agent is resumed automatically when the command completes; there is no polling or list-wait loop.
+- **Timeline event log**: live events are stamped with stable `seq` values and item keys in `TimelineLogWriter`; persistable events are upserted into the durable event log so replay reads the same wire events instead of reconstructing UI state from SDK messages.
 - **Event normalization**: raw model and agent SDK events are converted into stable frontend events such as `thinking_delta`, `text_delta`, `tool_call`, `tool_result`, and `subagent_task`.
-- **Session pool**: `AgentSessionPool` manages active sessions, interruption, cancellation, idle eviction, and tool-binding invalidation.
+- **Session pool**: `AgentSessionPool` manages active sessions, notification recovery, interruption, cancellation, idle eviction, and tool-binding invalidation.
 - **History projection**: `Z3r0Session` adds owner and nested-call metadata around SDK messages so each agent receives the right view of the shared conversation.
 - **Context compaction**: when context approaches the model window, the runtime summarizes earlier projected history while preserving recent context and durable facts.
 
@@ -139,33 +159,51 @@ Key runtime boundaries:
 sequenceDiagram
   participant CSO as CSO Agent
   participant D as Delegation Tools
-  participant SJ as Subagent Runtime
+  participant DB as PostgreSQL
+  participant SJ as Subagent Driver
   participant Child as Specialist Agent
-  participant N as Notification Signal
+  participant N as Notifications
+  participant P as Parent Driver
 
   CSO->>D: start_subagent_task(agent_code, brief)
-  D->>SJ: create persistent job
+  D->>DB: create task + AWAITING parent obligation
+  D->>SJ: register _SubagentDriver and spawn drive
   SJ-->>CSO: run_id (CSO ends turn)
   SJ->>Child: run_until_idle(brief)
   Child-->>SJ: stream progress / final output
-  SJ->>N: signal_target_notifications(parent)
-  N-->>CSO: InterruptSignal → resume turn
-  CSO-->>CSO: integrate result
+  alt child starts nested work
+    SJ->>N: sees outstanding target obligations
+    SJ->>SJ: go dormant with no live task
+  else child reaches terminal status
+    SJ->>DB: complete / fail task
+    DB->>N: AWAITING -> PENDING parent obligation
+    N->>P: resume_target_instance(parent)
+    P->>CSO: claim result notification
+    CSO-->>CSO: integrate result
+  end
 ```
 
-Specialist agents run as persistent background jobs managed by the unified `run_until_idle` executor. Status, progress, results, and errors are stored in PostgreSQL and streamed to the frontend. When a delegated job reaches a terminal state, the runtime signals the coordinator's notification channel; the coordinator's `iter_interruptible_events` raises an `InterruptSignal` to preempt the current turn (or `run_until_idle` wakes from idle wait), and the coordinator integrates the result into the main assessment.
+Specialist agents run through resumable per-run `_SubagentDriver` instances. Starting a subagent creates the `AgentSubordinateTask` record and the parent `SUBAGENT_FINISHED` notification obligation in one database transaction, so the parent never observes a gap where the child is neither running nor pending integration. Each subagent driver uses the same `run_until_idle` executor as the main agent, streams nested events through the session event bus, and then settles into one of three states: relaunch if a claimable notification arrived during drain, go dormant if child work or async jobs are still outstanding, or complete/fail/cancel the task.
+
+When a subagent completes or fails, the task update and parent obligation transition (`AWAITING` -> `PENDING`) commit together. `resume_target_instance` wakes the owning driver: main-agent targets route through `AgentSessionPool.resume_session`, while subagent targets relaunch their dormant `_SubagentDriver`. Canceled subagents resolve their obligation without waking the parent.
 
 ## Sandbox Tooling
 
 ```mermaid
 flowchart LR
   Agent["Agent Tool Call"] --> Binding["Sandbox Binding Check"]
-  Binding -->|running + authorized| Command["sync / async command"]
+  Binding -->|running + authorized| Sync["execute_sync_command"]
+  Binding -->|running + authorized| Async["execute_async_command"]
   Binding --> Skill["load_skill"]
   Binding --> Knowledge["agent knowledge"]
-  Command --> Docker["Docker exec"]
-  Docker --> Output["ToolResult JSON"]
+  Sync --> Docker["Docker exec"]
+  Docker --> Output["ToolResult JSON + output_file"]
   Output --> Agent
+  Async --> Job[("SandboxAsyncJob<br/>AWAITING obligation")]
+  Job -->|completed / failed| Notify["PENDING owner notification"]
+  Notify --> Agent
+  Agent --> Read["read_sandbox_command_output"]
+  Read --> Docker
 
   User["User"] --> Shell["Web Shell"]
   User --> File["File Manager"]
@@ -175,13 +213,17 @@ flowchart LR
   Screen --> Docker
 ```
 
-The optional sandbox image can include a browser, noVNC, reverse engineering utilities, network assessment utilities, and related review tools. Agents receive structured tool results, while users can open an interactive shell, GUI screen, and file manager for manual validation and review within an authorized scope.
+The optional sandbox image can include a browser, noVNC, reverse engineering utilities, network assessment utilities, and related review tools. Synchronous commands return captured output metadata immediately. Asynchronous commands are deliberately turn-terminal: after dispatch, the agent stops and is resumed only after the job completes or fails, with terminal status, exit code, output size, and output file delivered through the owner notification. Agents read completed output with `read_sandbox_command_output`; they do not poll running jobs.
 
 ## Technical Characteristics
 
+- **True async instance drivers**: main and subagent drivers drain ready turns and then stop; they do not block on background children or long sandbox commands. Completion notifications relaunch the owning instance when integration work is ready.
 - **Interrupt-driven task runtime**: `run_until_idle` provides a unified execution loop for both main and sub-agents; `iter_interruptible_events` races the SDK event stream against notification signals, raising `InterruptSignal` with CPU-interrupt-style atomicity that defers preemption until pending tool calls complete.
+- **Notification obligation scheduler**: subagent tasks and sandbox async jobs register `AWAITING` obligations atomically with their own records; terminal updates flip obligations to `PENDING`, `COMPLETED`, `FAILED`, or `CANCELED` so session liveness comes from one table.
+- **Turn-terminal async command dispatch**: successful `execute_async_command` calls end the agent turn immediately through SDK tool-use behavior, preventing follow-up polling and making completion notification the only resume path.
 - **Session-level agent graph**: role configuration, tools, knowledge, and subagents are bound dynamically per session.
-- **Persistent delegation jobs**: subagents run in the background via the same `run_until_idle` executor, can be canceled, recover from stale runtime state, and signal the coordinator for immediate preemptive resume.
+- **Self-healing delegation drivers**: subagents can be canceled while live or dormant, stale running tasks are failed on backend restart, and relaunch budgets prevent hot loops when a driver cannot make progress.
+- **Durable timeline replay**: the UI timeline persists stable event payloads with monotonic `seq` values and item keys, so refresh/replay uses the same event contract as live streaming.
 - **Viewer-specific context projection**: agents share one persisted history while receiving scoped context views, reducing cross-agent leakage of private tool details.
 - **Long-context compaction**: model-window-aware summaries preserve durable facts and recent state for long reviews.
 - **Stable streaming contract**: the frontend is decoupled from SDK event details and consumes application-level event schemas.
