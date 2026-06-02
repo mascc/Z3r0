@@ -138,7 +138,7 @@ sequenceDiagram
   TR->>N: claim PENDING notification
   N-->>TR: notification prompt / user message
   TR->>TR: run notification turn
-  S->>S: stop when no PENDING work; do not wait on AWAITING work
+  S->>S: stop when no PENDING work and leave AWAITING work dormant
 ```
 
 Key runtime boundaries:

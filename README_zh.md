@@ -138,7 +138,7 @@ sequenceDiagram
   TR->>N: claim PENDING notification
   N-->>TR: notification prompt / user message
   TR->>TR: 执行通知 turn
-  S->>S: 无 PENDING 时停止；不等待 AWAITING 后台任务
+  S->>S: 无 PENDING 时停止并让 AWAITING 后台任务保持 dormant
 ```
 
 关键运行边界：
