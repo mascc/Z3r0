@@ -83,7 +83,7 @@ function ToolExecutionBlock({
   const detailRef = useRef<HTMLDivElement | null>(null);
   const nestedActive = !!item.nested && transcriptHasRunningExecution(item.nested);
   const status = toolExecutionStatus(item);
-  const displayName = item.name || item.callId || "tool";
+  const displayName = item.name;
 
   useEffect(() => {
     if (open) detailRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });

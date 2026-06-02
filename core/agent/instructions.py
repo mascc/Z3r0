@@ -15,12 +15,10 @@ Always write user-facing responses as valid GitHub-Flavored Markdown.
 
 SANDBOX_COMMAND_INSTRUCTIONS = """## Sandbox Command Execution
 
-- Use `execute_sync_command` for short commands expected to finish within 30 seconds.
-- Use `execute_async_command` for long-running commands or work that should continue without blocking the current turn.
-- Both tools return compact metadata only: `status`, `output_file`, `output_bytes`, `output_lines`, and optional `exit_code`, `run_id`, `error`. Raw output is captured to `output_file`.
-- After starting an async command, continue independent work or end the turn. The runtime automatically resumes with completion context when the command finishes; no polling or waiting is needed.
-- At most 3 async commands may run concurrently. Use `list_sandbox_async_jobs` only for inspection, not as a waiting loop.
-- When metadata has terminal `status` and `output_lines > 0`, read the result with `read_sandbox_command_output` using `output_file` and `start_line: 1`, at most 200 lines per call.
+- Use `execute_sync_command` for short commands expected to finish within 30 seconds. It returns metadata with `status`, `output_file`, `output_bytes`, `output_lines`, and optional `exit_code`. Raw output is captured to `output_file`.
+- Use `execute_async_command` for long-running commands. Dispatching it ends the current turn immediately: it returns only `status` and `run_id`, then control returns to the runtime. After dispatching, do not continue working, run follow-up steps, or take any further action — your turn is over.
+- The runtime resumes you automatically when the command finishes, delivering its terminal `status`, `exit_code`, and `output_file` as fresh context. Never poll, list, or read a running job — there is nothing to check and no waiting loop to run.
+- On that resumption, if `output_lines > 0` and the result matters, read it with `read_sandbox_command_output` using the delivered `output_file` and `start_line: 1`, at most 200 lines per call.
 - Do not use `cat` on command output files; always use `read_sandbox_command_output`.
 """
 

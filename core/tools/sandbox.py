@@ -10,7 +10,6 @@ from core.sandbox import command_output
 from core.sandbox.command_jobs import cancel_async_sandbox_command, start_async_sandbox_command
 from core.sandbox.command_output import COMMAND_TIMEOUT_ERROR
 from schema.sandbox.async_jobs import SandboxAsyncJobStatus
-from schema.sandbox.command_outputs import SandboxCommandResultList
 from schema.common.tool_results import ToolResultSchema, ToolResultStatusSchema, ToolResultTypeSchema
 from service.sandbox import async_jobs as sandbox_async_jobs
 from service.sandbox.commands import SandboxContainerCommandTimeoutError, execute_sandbox_container_command
@@ -111,14 +110,18 @@ async def execute_async_command(
     command: str,
     timeout_seconds: int = _ASYNC_COMMAND_TIMEOUT_SECONDS,
 ) -> str:
-    """Start a long-running sandbox command and return running metadata.
-    
+    """Start a long-running sandbox command; this ends the current turn.
+
+    Dispatching is turn-terminal: control returns to the runtime and the agent
+    is resumed automatically when the command finishes, with its result and
+    output file delivered as fresh context. Never poll or read a running job.
+
     Args:
         command: str shell command to execute in the selected sandbox container.
         timeout_seconds: int command timeout in seconds, clamped to 1-300.
 
     Returns:
-        JSON metadata with status, run_id, output_file, and empty output stats. Continue independent work; the completion notification arrives automatically and resumes this turn.
+        JSON metadata with status and run_id.
     """
     container_id = ctx.context.sandbox_container_id
     if container_id is None:
@@ -153,7 +156,6 @@ async def execute_async_command(
     )
     return _command_result(
         status=SandboxAsyncJobStatus.RUNNING,
-        output_file=output_path,
         run_id=run_id,
     )
 
@@ -168,7 +170,7 @@ async def read_sandbox_command_output(
     """Read a bounded line range from a sandbox command output file.
 
     Args:
-        output_file: str output path returned by execute_sync_command or execute_async_command.
+        output_file: str output path returned by execute_sync_command or an async completion notification.
         start_line: int one-based starting line number.
         line_count: int number of lines to read, clamped by the output reader to a bounded chunk size.
 
@@ -205,39 +207,11 @@ async def read_sandbox_command_output(
 
 
 @function_tool
-async def list_sandbox_async_jobs(
-    ctx: RunContextWrapper[AgentRuntimeContext],
-    running_only: bool = False,
-    limit: int = 20,
-) -> str:
-    """List sandbox async commands owned by the current agent instance.
-
-    This is an inspection/capacity tool, not a wait primitive. Do not call it in loops to wait for completion.
-
-    Args:
-        running_only: bool whether to include only commands that are still running.
-        limit: int maximum number of recent jobs to return.
-
-    Returns:
-        JSON object containing recent async command jobs and their status/output metadata.
-    """
-    snapshots = await sandbox_async_jobs.list_async_jobs_for_agent(
-        session_id=ctx.context.session_id,
-        agent_instance_id=ctx.context.agent_instance_id,
-        running_only=running_only,
-        limit=limit,
-    )
-    return SandboxCommandResultList(
-        jobs=[command_output.result_metadata_from_snapshot(s) for s in snapshots],
-    ).model_dump_json(exclude_none=True, exclude_defaults=True)
-
-
-@function_tool
 async def cancel_sandbox_async_job(ctx: RunContextWrapper[AgentRuntimeContext], run_id: str) -> str:
     """Cancel a sandbox async command owned by the current session.
 
     Args:
-        run_id: str async command run id returned by execute_async_command or list_sandbox_async_jobs.
+        run_id: str async command run id returned by execute_async_command.
 
     Returns:
         JSON metadata for the latest known async command state after cancellation is requested.

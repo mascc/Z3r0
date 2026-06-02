@@ -100,26 +100,6 @@ async def count_running_async_jobs_for_agent(*, session_id: str, agent_instance_
         )).all())
 
 
-async def list_async_jobs_for_agent(
-    *,
-    session_id: str,
-    agent_instance_id: str,
-    running_only: bool = False,
-    limit: int = 20,
-) -> list[SandboxAsyncJobSnapshot]:
-    async with get_async_session() as session:
-        statement = select(SandboxAsyncJob).where(
-            SandboxAsyncJob.session_id == session_id,
-            SandboxAsyncJob.agent_instance_id == agent_instance_id,
-        )
-        if running_only:
-            statement = statement.where(SandboxAsyncJob.status == SandboxAsyncJobStatus.RUNNING.value)
-        rows = (await session.exec(
-            statement.order_by(SandboxAsyncJob.created_at.desc()).limit(max(1, min(int(limit), 50)))
-        )).all()
-        return [snapshot_from_job(row) for row in rows]
-
-
 async def complete_async_job(
     run_id: str,
     *,

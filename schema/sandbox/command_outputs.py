@@ -18,7 +18,3 @@ class SandboxCommandOutputChunk(BaseModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     content: str = ""
-
-
-class SandboxCommandResultList(BaseModel):
-    jobs: list[SandboxCommandResultMetadata] = Field(default_factory=list)

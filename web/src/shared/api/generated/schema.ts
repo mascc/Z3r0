@@ -1713,11 +1713,6 @@ export interface components {
             /** Start Line */
             start_line: number;
         };
-        /** SandboxCommandResultList */
-        SandboxCommandResultList: {
-            /** Jobs */
-            jobs?: components["schemas"]["SandboxCommandResultMetadata"][];
-        };
         /** SandboxCommandResultMetadata */
         SandboxCommandResultMetadata: {
             /**

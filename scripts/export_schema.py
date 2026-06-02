@@ -168,7 +168,6 @@ def _register_extra_schemas(schema: dict[str, Any]) -> None:
     from schema.common.tool_results import ToolResultSchema
     from schema.sandbox.command_outputs import (
         SandboxCommandOutputChunk,
-        SandboxCommandResultList,
         SandboxCommandResultMetadata,
     )
 
@@ -187,7 +186,6 @@ def _register_extra_schemas(schema: dict[str, Any]) -> None:
         "AgentSubordinateTaskToolResult": AgentSubordinateTaskToolResult,
         "ToolResultSchema": ToolResultSchema,
         "SandboxCommandResultMetadata": SandboxCommandResultMetadata,
-        "SandboxCommandResultList": SandboxCommandResultList,
         "SandboxCommandOutputChunk": SandboxCommandOutputChunk,
     }
     for name, model in extras.items():

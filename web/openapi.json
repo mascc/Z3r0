@@ -2262,19 +2262,6 @@
         "title": "SandboxCommandOutputChunk",
         "type": "object"
       },
-      "SandboxCommandResultList": {
-        "properties": {
-          "jobs": {
-            "items": {
-              "$ref": "#/components/schemas/SandboxCommandResultMetadata"
-            },
-            "title": "Jobs",
-            "type": "array"
-          }
-        },
-        "title": "SandboxCommandResultList",
-        "type": "object"
-      },
       "SandboxCommandResultMetadata": {
         "properties": {
           "error": {

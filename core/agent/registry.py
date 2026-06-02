@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
-from agents import Agent, Model, ModelSettings, Tool
+from agents import (
+    Agent,
+    FunctionToolResult,
+    Model,
+    ModelSettings,
+    RunContextWrapper,
+    Tool,
+    ToolsToFinalOutputResult,
+)
 
 from config import AgentConfig, WORKSPACE, get_config
 from core.agent.instructions import build_instructions
@@ -19,9 +28,32 @@ from core.tools.sandbox import (
     load_skill,
 )
 from logger import get_logger
+from schema.sandbox.async_jobs import SandboxAsyncJobStatus
 
 
 logger = get_logger(__name__)
+
+
+async def _end_turn_after_async_dispatch(
+    _ctx: RunContextWrapper[AgentRuntimeContext],
+    results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    """End the turn the moment an async command is successfully dispatched.
+
+    Dispatching background work is turn-terminal: the agent stops here and is
+    woken by the completion notification, so it can never poll for the result.
+    A failed dispatch is not terminal, letting the agent react in the same turn.
+    """
+    for result in results:
+        if getattr(result.tool, "name", None) != execute_async_command.name:
+            continue
+        try:
+            status = json.loads(result.output).get("status")
+        except (TypeError, ValueError):
+            status = None
+        if status == SandboxAsyncJobStatus.RUNNING.value:
+            return ToolsToFinalOutputResult(is_final_output=True, final_output=result.output)
+    return ToolsToFinalOutputResult(is_final_output=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +144,7 @@ class AgentRegistry:
             model_settings=ModelSettings(parallel_tool_calls=False),
             instructions=instructions,
             tools=tools,
+            tool_use_behavior=_end_turn_after_async_dispatch,
         )
 
 

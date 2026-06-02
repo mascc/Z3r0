@@ -11,7 +11,8 @@ Use sandbox command tools for authorized task work inside the selected sandbox c
 
 Command tools return compact JSON metadata; raw output is captured to `output_file`:
 
-- Fields: `status`, `output_file`, `output_bytes`, `output_lines`, optional `exit_code`, `run_id`, `error`.
+- `execute_sync_command` returns `status`, `output_file`, `output_bytes`, `output_lines`, and optional `exit_code`.
+- `execute_async_command` returns only `status` and `run_id`; its terminal `status`, `exit_code`, and `output_file` are delivered later when the runtime resumes you.
 - Status values: `running`, `completed`, `failed`, `canceled`.
 - Read output with `read_sandbox_command_output` using `output_file` and `start_line: 1`, at most 200 lines per call. Do not use `cat`.
 
@@ -32,15 +33,12 @@ Always pass timing arguments explicitly via `timeout_seconds`.
 
 ## Async Jobs
 
-After `execute_async_command`, keep the returned `run_id` and `output_file`.
+Dispatching `execute_async_command` ends the current turn immediately.
 
-- Continue independent work while the async job runs.
-- The runtime automatically resumes the agent with completion context when the job finishes; no polling or waiting is needed.
-- Use `list_sandbox_async_jobs` only for inspection or capacity checks.
+- After dispatching, do not continue working, run follow-up steps, or take any further action — your turn is over.
+- The runtime resumes you automatically when the job finishes, delivering its `status`, `exit_code`, and `output_file` as fresh context.
+- Never poll, read, or check a running job, and never use `sleep`, shell wait loops, or filler progress messages — there is nothing to do but wait to be resumed.
 - Use `cancel_sandbox_async_job` only when cancellation is requested or the job is no longer useful.
-- Never use `sleep`, shell wait loops, repeated status polling, or filler progress messages.
-
-At most 3 async commands may run for one agent instance.
 
 ## Output Handling
 

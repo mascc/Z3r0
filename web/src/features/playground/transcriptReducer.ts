@@ -92,6 +92,8 @@ function upsertStreamingBlock(
 }
 
 function upsertToolCall(blocks: TranscriptBlock[], callId: string, name: string, argumentsValue: Record<string, unknown>) {
+  // A nameless tool call is not renderable; drop it so it never reaches the UI.
+  if (!name) return;
   const index = findToolBlockIndex(blocks, callId, name, argumentsValue);
   if (index === -1) {
     blocks.push({ kind: "tool", id: callId || newId(), callId, name, arguments: argumentsValue, output: "", isError: false, resolved: false });
@@ -102,11 +104,9 @@ function upsertToolCall(blocks: TranscriptBlock[], callId: string, name: string,
 }
 
 function upsertToolResult(blocks: TranscriptBlock[], callId: string, output: string, isError: boolean) {
+  // Attach to its named tool call; never materialize an orphan (nameless) block.
   const index = findToolBlockIndex(blocks, callId);
-  if (index === -1) {
-    blocks.push({ kind: "tool", id: callId || newId(), callId, name: "", arguments: {}, output, isError, resolved: true });
-    return;
-  }
+  if (index === -1) return;
   const existing = blocks[index] as ToolExecutionItem;
   blocks[index] = { ...existing, output, isError, resolved: true };
 }

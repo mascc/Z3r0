@@ -16,7 +16,6 @@ from core.tools.sandbox import (
     cancel_sandbox_async_job,
     execute_async_command,
     execute_sync_command,
-    list_sandbox_async_jobs,
     load_skill,
     read_sandbox_command_output,
 )
@@ -60,7 +59,6 @@ SANDBOX_TOOLS = (
     ToolMount(execute_sync_command, requires_sandbox_container=True),
     ToolMount(read_sandbox_command_output, requires_sandbox_container=True),
     ToolMount(execute_async_command, requires_sandbox_container=True),
-    ToolMount(list_sandbox_async_jobs, requires_sandbox_container=True),
     ToolMount(cancel_sandbox_async_job, requires_sandbox_container=True),
     ToolMount(load_skill, requires_sandbox_container=True),
 )
