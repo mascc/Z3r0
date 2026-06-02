@@ -1,7 +1,6 @@
 import type {
   AgentContentEvent,
   AgentInputPart,
-  AgentStreamEvent,
 } from "../../shared/api/types";
 import {
   contentSignature,
@@ -41,19 +40,13 @@ export const initialChatState: ChatState = { nodes: [], streaming: false, pendin
 
 type AgentNode = Extract<ChatNode, { kind: "agent" }>;
 
-function newId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
 function appendUserMessage(
   state: ChatState,
   content: AgentInputPart[],
   displayText: string,
   targetAgentCode: string,
   createdAt: AgentContentEvent["created_at"],
+  seq: number,
 ): ChatState {
   const signature = contentSignature(content);
   if (state.streaming) {
@@ -81,7 +74,7 @@ function appendUserMessage(
   }
   const nodes = [...state.nodes, {
     kind: "user" as const,
-    id: newId(),
+    id: `user:${seq}`,
     createdAt,
     content,
     displayText,
@@ -107,20 +100,7 @@ export function finishChatTurn(state: ChatState): ChatState {
   return { ...state, streaming: false, liveFrom: null, pendingNested: prunePendingNested(state) };
 }
 
-export function disconnectChatTurn(state: ChatState): ChatState {
-  if (!state.streaming) return state;
-  const nodes = state.liveFrom === null ? state.nodes : state.nodes.slice(0, state.liveFrom);
-  return { ...state, nodes, streaming: false, liveFrom: null, pendingNested: prunePendingNested({ ...state, nodes }) };
-}
-
 function chatReduce(state: ChatState, event: AgentContentEvent): ChatState {
-  return applyContentEvent(state, event);
-}
-
-export function streamReduce(state: ChatState, event: AgentStreamEvent): ChatState {
-  if (event.type === "done") return event.nested_call_id ? state : finishChatTurn(state);
-  if (event.type === "run_state") return event.running ? startChatTurn(state) : finishChatTurn(state);
-  if (stateHasContentEvent(state, event)) return state;
   return applyContentEvent(state, event);
 }
 
@@ -128,43 +108,16 @@ export function chatReplay(events: readonly AgentContentEvent[]): ChatState {
   return finishChatTurn(events.reduce<ChatState>(chatReduce, initialChatState));
 }
 
-export function prependChatHistory(state: ChatState, events: readonly AgentContentEvent[]): ChatState {
-  if (!events.length) return state;
-  const prefix = chatReplay(events);
-  if (!prefix.nodes.length) return state;
-  return { ...state, nodes: mergeChatNodeBoundary(prefix.nodes, state.nodes) };
-}
-
-function mergeChatNodeBoundary(prefix: ChatNode[], suffix: ChatNode[]): ChatNode[] {
-  if (!prefix.length) return suffix;
-  if (!suffix.length) return prefix;
-  const lastPrefix = prefix[prefix.length - 1];
-  const firstSuffix = suffix[0];
-  if (lastPrefix.kind !== "agent" || firstSuffix.kind !== "agent") {
-    return [...prefix, ...suffix];
-  }
-  return [
-    ...prefix.slice(0, -1),
-    {
-      ...firstSuffix,
-      createdAt: lastPrefix.createdAt || firstSuffix.createdAt,
-      agentName: firstSuffix.agentName || lastPrefix.agentName,
-      blocks: [...lastPrefix.blocks, ...firstSuffix.blocks],
-    },
-    ...suffix.slice(1),
-  ];
-}
-
-function startChatTurn(state: ChatState): ChatState {
-  if (state.streaming && state.liveFrom !== null) return state;
-  const tailIndex = state.nodes.length - 1;
-  const tail = state.nodes[tailIndex];
-  return { ...state, streaming: true, liveFrom: tail?.kind === "agent" ? tailIndex : state.nodes.length };
+// Build the rendered node list from a seq-ordered, key-deduped event list.
+// The reducer upserts blocks by segment/call/run id, so feeding a clean list
+// (one event per logical item) produces a duplicate-free transcript.
+export function buildChatNodesFromEvents(events: readonly AgentContentEvent[]): ChatNode[] {
+  return chatReplay(events).nodes;
 }
 
 function applyContentEvent(state: ChatState, event: AgentContentEvent): ChatState {
   if (event.type === "user_message") {
-    return appendUserMessage(state, event.content, event.display_text, event.target_agent_code, event.created_at);
+    return appendUserMessage(state, event.content, event.display_text, event.target_agent_code, event.created_at, event.seq);
   }
   if (event.type === "turn_boundary") {
     return event.nested_call_id ? state : finishChatTurn(state);
@@ -189,7 +142,7 @@ function routeToTopLevel(state: ChatState, event: AgentContentEvent): ChatState 
       if (!agent.createdAt) agent.createdAt = event.created_at;
       nodes[existingIndex] = agent;
     } else {
-      agent = createAgentNode(event.created_at);
+      agent = createAgentNode(event);
       nodes.push(agent);
     }
   }
@@ -288,42 +241,11 @@ function prunePendingNested(state: ChatState): ChatState["pendingNested"] {
   return pendingNested;
 }
 
-function stateHasContentEvent(state: ChatState, event: AgentContentEvent): boolean {
-  if (event.type === "user_message") {
-    const signature = contentSignature(event.content);
-    return findLiveUserMessageIndex(state.nodes, signature, event.target_agent_code) !== -1;
-  }
-  const nestedCallId = "nested_call_id" in event ? event.nested_call_id : "";
-  if (nestedCallId) return stateHasNestedEvent(state, nestedCallId, event);
-  return liveNodes(state).some((node) => node.kind === "agent" && transcriptHasEvent(node, event));
-}
-
-function stateHasNestedEvent(state: ChatState, callId: string, event: AgentContentEvent): boolean {
-  return state.nodes.some((node) => {
-    if (node.kind !== "agent") return false;
-    const toolIndex = findToolBlockIndex(node.blocks, callId);
-    if (toolIndex === -1) return false;
-    const tool = node.blocks[toolIndex] as ToolExecutionItem;
-    if (event.type === "subagent_task") {
-      return Boolean(
-        tool.subagentTask?.runId === event.run_id
-        && tool.subagentTask.status === event.status
-        && tool.subagentTask.progress === event.progress
-        && tool.subagentTask.result === event.result
-        && tool.subagentTask.error === event.error,
-      );
-    }
-    return Boolean(tool.nested && transcriptHasEvent(tool.nested, event));
-  });
-}
-
-function liveNodes(state: ChatState): ChatNode[] {
-  if (!state.streaming || state.liveFrom === null) return [];
-  return state.nodes.slice(state.liveFrom);
-}
-
-function createAgentNode(createdAt: AgentContentEvent["created_at"]): AgentNode {
-  return { kind: "agent", id: newId(), ...createTranscript(createdAt) };
+// Node id is derived from the seq of the event that opened the node so the
+// full-transcript rebuild on every live flush yields identical React keys
+// (no remount/flicker), while still being stable across history replay.
+function createAgentNode(event: AgentContentEvent): AgentNode {
+  return { kind: "agent", id: `agent:${event.seq}`, ...createTranscript(event.created_at) };
 }
 
 function cloneAgentNode(node: AgentNode): AgentNode {

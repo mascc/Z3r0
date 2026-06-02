@@ -1,28 +1,24 @@
-import json
 from datetime import datetime
 from uuid import uuid4
 
+from pydantic import TypeAdapter
 from sqlalchemy import delete, exists, func, text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from core.agent.constants import DEFAULT_AGENT_CODE
 from core.delegation.subagents import cancel_session_subagent_runs
-from core.runtime.events import event_from_subagent_task, events_from_sdk_message
 from core.runtime.session import get_agent_pool, get_agent_registry
-from core.conversation.store import StoredItem, fetch_stored_items
 from core.sandbox.command_jobs import cancel_session_async_sandbox_commands
 from database import get_async_session
 from logger import get_logger
 from model.agent.sessions import AgentSessionMeta
-from model.agent.subordinates import AgentSubordinateTask
 from model.work_project.projects import WorkProject, WorkProjectOwner
 from schema.agent.events import AgentContentEventSchema
 from schema.agent.sessions import AgentSessionSummarySchema, SessionType
 from schema.system_user.users import SystemUserRole
 from service.agent import notifications as agent_notifications
-from service.agent import subordinates as agent_subordinates
-from service.sandbox import async_jobs as sandbox_async_jobs
+from service.agent.event_log import fetch_timeline_page
 from utils.sdk_tables import BOOTSTRAP_SESSION_ID, agent_messages, agent_sessions
 
 
@@ -30,6 +26,8 @@ logger = get_logger(__name__)
 
 _TITLE_MAX_LEN = 80
 DEFAULT_REPLAY_EVENT_PAGE_SIZE = 80
+
+_content_event_adapter: TypeAdapter[AgentContentEventSchema] = TypeAdapter(AgentContentEventSchema)
 
 
 async def create_session(user_id: int) -> str:
@@ -312,11 +310,10 @@ async def force_mark_session_stopped(session_id: str, *, error: str = "") -> Non
 
 
 async def has_active_session_runtime(session_id: str) -> bool:
-    return (
-        await agent_subordinates.has_running_subagent_tasks(session_id=session_id)
-        or await agent_notifications.has_active_session_notifications(session_id=session_id)
-        or await sandbox_async_jobs.has_running_async_jobs(session_id=session_id)
-    )
+    # Single source of truth: every background task (sub-agent / async job)
+    # registers an outstanding notification obligation for its whole lifetime,
+    # so the notification table alone reflects session liveness.
+    return await agent_notifications.has_active_session_notifications(session_id=session_id)
 
 
 async def replay_session_events(
@@ -328,7 +325,7 @@ async def replay_session_events(
         session_id=session_id,
         user_id=user_id,
         user_role=user_role,
-        before_id=None,
+        before_seq=None,
         limit=DEFAULT_REPLAY_EVENT_PAGE_SIZE,
     )
 
@@ -338,329 +335,33 @@ async def replay_session_events_page(
     user_id: int,
     user_role: SystemUserRole,
     *,
-    before_id: int | None,
+    before_seq: int | None,
     limit: int,
 ) -> tuple[list[AgentContentEventSchema], bool, int | None] | None:
-    # nested-call items are tagged so the UI re-attaches them to the parent ToolCard
-    limit = max(1, limit)
-    fetch_limit = limit + 1
+    """Return one turn-aligned page of the persisted UI timeline, by seq cursor.
+
+    The timeline log already stores the exact wire events (with stable identity
+    and seq), so replay is a straight read + validate — no SDK-message
+    derivation, identity remapping, or content-based de-duplication.
+    """
     async with get_async_session() as session:
         if not await _can_access_session(session, session_id, user_id, user_role):
             return None
-        stored_items, has_more, next_before_id = await _fetch_replay_turn_page(
-            session,
-            session_id,
-            before_id=before_id,
-            limit=limit,
-            fetch_limit=fetch_limit,
-        )
-        # On the initial load (before_id is None) the current turn alone is
-        # often too narrow for a useful first paint — a single user message
-        # plus one tool_call that delegates to a subagent currently emitting
-        # hundreds of nested items will leave the visible scroll buffer
-        # showing only "the last few messages" until the user manually
-        # scrolls up to fetch more. Keep prepending whole prior turns until
-        # the first paint covers a normal page worth of stored items (or we
-        # reach the start of the session). Each prepended turn is still
-        # turn-aligned so user/assistant boundaries stay clean in the UI.
-        if before_id is None:
-            while has_more and stored_items and len(stored_items) < limit:
-                prior_items, prior_has_more, prior_next_before_id = await _fetch_replay_turn_page(
-                    session,
-                    session_id,
-                    before_id=stored_items[0].message_id,
-                    limit=limit,
-                    fetch_limit=fetch_limit,
-                )
-                if not prior_items:
-                    break
-                stored_items = prior_items + stored_items
-                has_more = prior_has_more
-                next_before_id = prior_next_before_id if prior_has_more else None
-        sub_tasks = list((await session.exec(
-            select(AgentSubordinateTask)
-            .where(AgentSubordinateTask.session_id == session_id)
-            .order_by(AgentSubordinateTask.created_at)
-        )).all())
 
-    code_to_name = get_agent_registry().code_to_name()
-    top_level_events: list[AgentContentEventSchema] = []
-    nested_events_by_call_id: dict[str, list[AgentContentEventSchema]] = {}
-    for stored in stored_items:
-        agent_name = code_to_name.get(stored.owner_code, "")
-        for event in events_from_sdk_message(
-            stored.item, str(stored.message_id),
-            created_at=stored.created_at,
-            owner_code=stored.owner_code,
-            agent_name=agent_name,
-            nested_for=stored.nested_for,
-            nested_call_id=stored.nested_call_id,
-        ):
-            nested_call_id = getattr(event, "nested_call_id", "")
-            if nested_call_id:
-                nested_events_by_call_id.setdefault(nested_call_id, []).append(event)
-            else:
-                top_level_events.append(event)
-
-    task_events_by_call_id: dict[str, list[AgentContentEventSchema]] = {}
-    for task in sub_tasks:
-        if not task.nested_call_id:
-            continue
-        task_events_by_call_id.setdefault(task.nested_call_id, []).append(event_from_subagent_task(
-            run_id=task.run_id,
-            parent_agent_code=task.parent_agent_code,
-            parent_agent_instance_id=task.parent_agent_instance_id,
-            agent_code=task.agent_code,
-            agent_name=task.agent_name,
-            status=task.status,
-            result=task.result,
-            error=task.error,
-            progress=task.progress,
-            nested_call_id=task.nested_call_id,
-            created_at=task.updated_at,
-        ))
-
-    events = _normalize_replay_events(_attach_nested_replay_events(
-        top_level_events,
-        nested_events_by_call_id,
-        task_events_by_call_id,
-        include_orphans=not has_more,
-    ))
-    return events, has_more, next_before_id
-
-
-async def _fetch_replay_turn_page(
-    session: AsyncSession,
-    session_id: str,
-    *,
-    before_id: int | None,
-    limit: int,
-    fetch_limit: int,
-) -> tuple[list[StoredItem], bool, int | None]:
-    """Fetch one conversation turn ending before *before_id* (latest turn if None).
-
-    A "turn" starts at the most recent top-level user message that fits the
-    window.  The page extends backwards across sibling fetches until either a
-    user-message boundary is found or history is exhausted.
-    """
-    window = await fetch_stored_items(
-        session,
+    items, has_more, next_before_seq = await fetch_timeline_page(
         session_id,
-        before_id=before_id,
-        limit=fetch_limit,
+        before_seq=before_seq,
+        limit=max(1, limit),
     )
-    has_more = len(window) > limit
-    if not has_more:
-        return window, False, None
 
-    window = window[-limit:]
-    while True:
-        turn_start = _top_level_user_index(window)
-        if turn_start != -1:
-            page = window[turn_start:]
-            return page, True, page[0].message_id
-        older = await fetch_stored_items(
-            session,
-            session_id,
-            before_id=window[0].message_id,
-            limit=fetch_limit,
-        )
-        if not older:
-            return window, False, None
-        older_has_more = len(older) > limit
-        window = (older[-limit:] if older_has_more else older) + window
-        if not older_has_more:
-            # End of history reached without a user-message boundary; keep
-            # whatever leading items remain so nothing is silently dropped.
-            return window, False, None
-
-
-def _attach_nested_replay_events(
-    top_level_events: list[AgentContentEventSchema],
-    nested_events_by_call_id: dict[str, list[AgentContentEventSchema]],
-    task_events_by_call_id: dict[str, list[AgentContentEventSchema]],
-    *,
-    include_orphans: bool = True,
-) -> list[AgentContentEventSchema]:
     events: list[AgentContentEventSchema] = []
-    for event in top_level_events:
-        events.append(event)
-        if getattr(event, "type", "") != "tool_call":
-            continue
-        call_id = getattr(event, "call_id", "")
-        if not call_id:
-            continue
-        events.extend(task_events_by_call_id.pop(call_id, ()))
-        events.extend(nested_events_by_call_id.pop(call_id, ()))
-    if include_orphans:
-        for call_id in sorted(set(task_events_by_call_id) | set(nested_events_by_call_id)):
-            events.extend(task_events_by_call_id.get(call_id, ()))
-            events.extend(nested_events_by_call_id.get(call_id, ()))
-    return events
-
-
-def _top_level_user_index(stored_items: list[StoredItem]) -> int:
-    for index, stored in enumerate(stored_items):
-        if _is_top_level_user_item(stored):
-            return index
-    return -1
-
-
-def _is_top_level_user_item(stored: StoredItem) -> bool:
-    if stored.nested_call_id:
-        return False
-    return stored.item.get("role") == "user"
-
-
-def _normalize_replay_events(events: list[AgentContentEventSchema]) -> list[AgentContentEventSchema]:
-    """Collapse duplicate persisted facts before the UI rebuilds transcript state."""
-    return _ReplayEventNormalizer().normalize(events)
-
-
-class _ReplayEventNormalizer:
-    def __init__(self) -> None:
-        self.normalized: list[AgentContentEventSchema] = []
-        self.turn_seen_text: set[tuple[str, str, str, str]] = set()
-        self.tool_indexes: dict[tuple[str, str, str], int] = {}
-        self.tool_result_indexes: dict[tuple[str, str, str], int] = {}
-        self.tool_semantic_indexes: dict[tuple[str, str, str, str], int] = {}
-        self.tool_call_aliases: dict[tuple[str, str, str], str] = {}
-        self.subagent_indexes: dict[str, int] = {}
-
-    def normalize(self, events: list[AgentContentEventSchema]) -> list[AgentContentEventSchema]:
-        for event in events:
-            self._append(event)
-        return self.normalized
-
-    def _append(self, event: AgentContentEventSchema) -> None:
-        event = _normalize_tool_call_id(event, self.tool_call_aliases)
-        event_type = str(getattr(event, "type", ""))
-        if event_type in {"user_message", "turn_boundary"} and not getattr(event, "nested_call_id", ""):
-            self._reset_turn()
-            self.normalized.append(event)
-            return
-        if event_type in {"text_complete", "thinking_complete"}:
-            self._append_text_complete(event, event_type)
-            return
-        if event_type == "tool_call":
-            self._append_tool_call(event)
-            return
-        if event_type == "tool_result":
-            self._append_tool_result(event)
-            return
-        if event_type == "subagent_task":
-            self._append_subagent_task(event)
-            return
-        self.normalized.append(event)
-
-    def _reset_turn(self) -> None:
-        self.turn_seen_text.clear()
-        self.tool_indexes.clear()
-        self.tool_result_indexes.clear()
-        self.tool_semantic_indexes.clear()
-        self.tool_call_aliases.clear()
-        self.subagent_indexes.clear()
-
-    def _append_text_complete(self, event: AgentContentEventSchema, event_type: str) -> None:
-        key = (
-            event_type,
-            getattr(event, "nested_for", ""),
-            getattr(event, "nested_call_id", ""),
-            getattr(event, "text", ""),
-        )
-        if key in self.turn_seen_text:
-            return
-        self.turn_seen_text.add(key)
-        self.normalized.append(event)
-
-    def _append_tool_call(self, event: AgentContentEventSchema) -> None:
-        key = _tool_event_key(event)
-        semantic_key = _tool_semantic_key(event)
-        existing_index = self.tool_indexes.get(key)
-        if existing_index is None:
-            existing_index = self.tool_semantic_indexes.get(semantic_key)
-        if existing_index is None:
-            self.tool_indexes[key] = len(self.normalized)
-            self.tool_semantic_indexes[semantic_key] = len(self.normalized)
-            self.normalized.append(event)
-            return
-
-        existing = self.normalized[existing_index]
-        existing_call_id = getattr(existing, "call_id", "")
-        incoming_call_id = getattr(event, "call_id", "")
-        if existing_call_id and incoming_call_id and existing_call_id != incoming_call_id:
-            self.tool_call_aliases[key] = existing_call_id
-        self.normalized[existing_index] = _merge_tool_call(existing, event, call_id=existing_call_id)
-
-    def _append_tool_result(self, event: AgentContentEventSchema) -> None:
-        key = _tool_event_key(event)
-        existing_index = self.tool_result_indexes.get(key)
-        if existing_index is None:
-            self.tool_result_indexes[key] = len(self.normalized)
-            self.normalized.append(event)
-            return
-        self.normalized[existing_index] = event
-
-    def _append_subagent_task(self, event: AgentContentEventSchema) -> None:
-        run_id = getattr(event, "run_id", "")
-        existing_index = self.subagent_indexes.get(run_id)
-        if run_id and existing_index is not None:
-            self.normalized[existing_index] = event
-            return
-        if run_id:
-            self.subagent_indexes[run_id] = len(self.normalized)
-        self.normalized.append(event)
-
-
-def _merge_tool_call(
-    existing: AgentContentEventSchema,
-    incoming: AgentContentEventSchema,
-    *,
-    call_id: str = "",
-) -> AgentContentEventSchema:
-    if getattr(incoming, "name", "") or getattr(incoming, "arguments", None):
-        if call_id and getattr(incoming, "call_id", "") != call_id:
-            return incoming.model_copy(update={"call_id": call_id})
-        return incoming
-    return existing
-
-
-def _normalize_tool_call_id(
-    event: AgentContentEventSchema,
-    aliases: dict[tuple[str, str, str], str],
-) -> AgentContentEventSchema:
-    event_type = str(getattr(event, "type", ""))
-    if event_type not in {"tool_call", "tool_result"}:
-        return event
-    key = _tool_event_key(event)
-    alias = aliases.get(key)
-    if not alias or getattr(event, "call_id", "") == alias:
-        return event
-    return event.model_copy(update={"call_id": alias})
-
-
-def _tool_event_key(event: AgentContentEventSchema) -> tuple[str, str, str]:
-    return (
-        getattr(event, "nested_for", ""),
-        getattr(event, "nested_call_id", ""),
-        getattr(event, "call_id", ""),
-    )
-
-
-def _tool_semantic_key(event: AgentContentEventSchema) -> tuple[str, str, str, str]:
-    return (
-        getattr(event, "nested_for", ""),
-        getattr(event, "nested_call_id", ""),
-        getattr(event, "name", ""),
-        _stable_json(getattr(event, "arguments", None)),
-    )
-
-
-def _stable_json(value) -> str:
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    except TypeError:
-        return str(value)
+    for seq, payload in items:
+        payload["seq"] = seq
+        try:
+            events.append(_content_event_adapter.validate_python(payload))
+        except Exception:
+            logger.debug("skipping malformed timeline payload session=%s seq=%s", session_id, seq)
+    return events, has_more, next_before_seq
 
 
 async def can_access_session(session_id: str, user_id: int, user_role: SystemUserRole) -> bool:

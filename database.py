@@ -9,6 +9,7 @@ from model.sandbox.async_jobs import SandboxAsyncJob
 from model.agent.notifications import AgentNotification
 from model.agent.subordinates import AgentSubordinateTask
 from model.agent.message_meta import AgentMessageMeta
+from model.agent.event_log import AgentEventLog
 from model.agent.context_compactions import AgentContextCompaction
 from model.agent.sessions import AgentSessionMeta
 from model.sandbox.containers import SandboxContainer
@@ -24,7 +25,7 @@ logger = get_logger(__name__)
 _registered_models = [
     SystemUser, SandboxImage, SandboxContainer, WorkProject, WorkProjectOwner,
     AgentSessionMeta, AgentMessageMeta, AgentContextCompaction,
-    AgentSubordinateTask, AgentNotification, SandboxAsyncJob,
+    AgentSubordinateTask, AgentNotification, SandboxAsyncJob, AgentEventLog,
 ]
 
 _engine: AsyncEngine | None = None
@@ -59,10 +60,21 @@ def init_engine() -> None:
         return
 
     cfg = get_config()
-    dsn = f"postgresql+asyncpg://{cfg.database.username}:{cfg.database.password}@{cfg.database.host}:{cfg.database.port}/{cfg.database.database}"
+    db = cfg.database
+    dsn = f"postgresql+asyncpg://{db.username}:{db.password}@{db.host}:{db.port}/{db.database}"
 
-    _engine = create_async_engine(url=dsn)
-    logger.info("async postgres engine initialized")
+    _engine = create_async_engine(
+        url=dsn,
+        pool_size=db.pool_size,
+        max_overflow=db.max_overflow,
+        pool_timeout=db.pool_timeout_seconds,
+        pool_recycle=db.pool_recycle_seconds,
+        pool_pre_ping=db.pool_pre_ping,
+    )
+    logger.info(
+        "async postgres engine initialized (pool_size=%d max_overflow=%d timeout=%ds)",
+        db.pool_size, db.max_overflow, db.pool_timeout_seconds,
+    )
 
 
 def get_engine() -> AsyncEngine:

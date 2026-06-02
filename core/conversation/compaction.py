@@ -167,6 +167,43 @@ async def compact_if_needed(
         compact_until_message_id,
     )
 
+    logger.debug(
+        "agent context compaction summarizing session=%s viewer=%s candidate_items=%d candidate_tokens=%d",
+        scope.session_id,
+        scope.viewer_agent_code,
+        len(candidate_items),
+        candidate_tokens,
+    )
+    # Summarize WITHOUT holding a pooled connection: the LLM call can run for
+    # seconds up to the stream idle timeout, and pinning a connection across it
+    # starves the pool under sub-agent fan-out (the original deadlock that left
+    # parents waiting forever). The advisory lock only needs to guard the fast
+    # store, and compaction scope is per-agent-instance with serialized turns,
+    # so same-scope concurrency is effectively impossible anyway.
+    try:
+        summary_text = await _summarize_items([item.item for item in candidate_items], agent_config)
+    except Exception as exc:
+        logger.warning(
+            "agent context compaction failed session=%s viewer=%s reason=%s",
+            scope.session_id,
+            scope.viewer_agent_code,
+            _one_line_error(exc),
+        )
+        _raise_if_hard_stop(projected_tokens, hard_stop_tokens, "context compaction failed near model context limit")
+        return CompactionDecision(False, projected_tokens, context_window, trigger_tokens, target_tokens)
+    if not summary_text.strip():
+        logger.warning(
+            "agent context compaction produced empty summary session=%s viewer=%s candidate_items=%d",
+            scope.session_id,
+            scope.viewer_agent_code,
+            len(candidate_items),
+        )
+        _raise_if_hard_stop(projected_tokens, hard_stop_tokens, "context compaction produced an empty summary")
+        return CompactionDecision(False, projected_tokens, context_window, trigger_tokens, target_tokens)
+
+    summary_item = _summary_item(summary_text)
+    source_tokens = candidate_tokens
+    summary_tokens = estimate_items_tokens([summary_item], agent_config.model)
     async with session_factory() as sess:
         if not await _try_lock_compaction(sess, scope):
             logger.debug(
@@ -178,37 +215,6 @@ async def compact_if_needed(
             )
             return CompactionDecision(False, projected_tokens, context_window, trigger_tokens, target_tokens)
         try:
-            logger.debug(
-                "agent context compaction summarizing session=%s viewer=%s candidate_items=%d candidate_tokens=%d",
-                scope.session_id,
-                scope.viewer_agent_code,
-                len(candidate_items),
-                candidate_tokens,
-            )
-            try:
-                summary_text = await _summarize_items([item.item for item in candidate_items], agent_config)
-            except Exception as exc:
-                logger.warning(
-                    "agent context compaction failed session=%s viewer=%s reason=%s",
-                    scope.session_id,
-                    scope.viewer_agent_code,
-                    _one_line_error(exc),
-                )
-                _raise_if_hard_stop(projected_tokens, hard_stop_tokens, "context compaction failed near model context limit")
-                return CompactionDecision(False, projected_tokens, context_window, trigger_tokens, target_tokens)
-            if not summary_text.strip():
-                logger.warning(
-                    "agent context compaction produced empty summary session=%s viewer=%s candidate_items=%d",
-                    scope.session_id,
-                    scope.viewer_agent_code,
-                    len(candidate_items),
-                )
-                _raise_if_hard_stop(projected_tokens, hard_stop_tokens, "context compaction produced an empty summary")
-                return CompactionDecision(False, projected_tokens, context_window, trigger_tokens, target_tokens)
-
-            summary_item = _summary_item(summary_text)
-            source_tokens = candidate_tokens
-            summary_tokens = estimate_items_tokens([summary_item], agent_config.model)
             await _store_compaction(
                 sess=sess,
                 scope=scope,

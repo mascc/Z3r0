@@ -39,12 +39,12 @@ class ListAgentSessionsResponse(BaseModel):
     items: list[AgentSessionSummarySchema]
 
 
-# replay SDK session messages as content events
+# a page of the persisted UI timeline log, ordered ascending by seq
 class ListAgentEventsResponse(BaseModel):
     session_id: str
     items: list[AgentContentEventSchema]
     has_more: bool = False
-    next_before_id: int | None = None
+    next_before_seq: int | None = None
 
 
 # create agent session response schema (server-allocated session_id)

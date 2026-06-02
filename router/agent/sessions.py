@@ -55,14 +55,14 @@ async def update_agent_session_title_route(
 
 async def list_agent_events_route(
     session_id: str,
-    before_id: int | None = Query(default=None, ge=1),
+    before_seq: int | None = Query(default=None, ge=1),
     limit: int = Query(default=80, ge=1, le=200),
     user: AuthUser = Depends(require_user),
 ) -> CommonResponse[ListAgentEventsResponse]:
     return await list_agent_events_handler(
         session_id=session_id,
         user=user,
-        before_id=before_id,
+        before_seq=before_seq,
         limit=limit,
     )
 

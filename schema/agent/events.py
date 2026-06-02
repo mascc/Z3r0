@@ -89,6 +89,9 @@ AgentInputPart = Annotated[
 
 class _AgentScopedEvent(BaseModel):
     created_at: datetime
+    # per-session monotonic timeline ordinal stamped by the runtime event bus;
+    # 0 for control-only frames (run_state/done) that never enter the timeline
+    seq: int = 0
     agent_name: str = ""
     # when set, this event was streamed from inside a nested subagent call.
     # `nested_for` is the parent agent code; `nested_call_id` matches the
@@ -101,6 +104,7 @@ class _AgentScopedEvent(BaseModel):
 class UserMessageEvent(BaseModel):
     type: Literal[AgentEventTypeSchema.USER_MESSAGE] = AgentEventTypeSchema.USER_MESSAGE
     created_at: datetime
+    seq: int = 0
     content: list[AgentInputPart] = Field(min_length=1)
     display_text: str = ""
     # the agent this message was @-mentioned to; UI renders it as a "@<name>" chip
@@ -114,6 +118,7 @@ class TurnBoundaryEvent(_AgentScopedEvent):
 class RunStateEvent(BaseModel):
     type: Literal[AgentEventTypeSchema.RUN_STATE] = AgentEventTypeSchema.RUN_STATE
     created_at: datetime
+    seq: int = 0
     running: bool
 
 

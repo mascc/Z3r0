@@ -15,7 +15,12 @@
         "port": 5432,
         "database": "z3r0",
         "username": "root",
-        "password": "123456"
+        "password": "123456",
+        "pool_size": 32,
+        "max_overflow": 32,
+        "pool_timeout_seconds": 30,
+        "pool_recycle_seconds": 1800,
+        "pool_pre_ping": true
     },
     "agent_runtime": {
         "main_max_turns": 1000,

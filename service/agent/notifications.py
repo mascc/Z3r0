@@ -6,7 +6,6 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import or_
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import select, update
 
 from core.runtime.context import MAIN_AGENT_INSTANCE_PREFIX
@@ -17,10 +16,9 @@ from schema.agent.notifications import (
     AgentNotificationKind,
     AgentNotificationSnapshot,
     AgentNotificationStatus,
+    OUTSTANDING_NOTIFICATION_STATUSES,
     USER_MESSAGE_PRIORITY,
 )
-from schema.agent.subordinates import AgentSubordinateTaskSnapshot
-from schema.sandbox.async_jobs import SandboxAsyncJobSnapshot
 
 
 logger = get_logger(__name__)
@@ -30,115 +28,92 @@ _TERMINAL_NOTIFICATION_STATUSES = {
     AgentNotificationStatus.FAILED,
     AgentNotificationStatus.CANCELED,
 }
+_OUTSTANDING_VALUES = [status.value for status in OUTSTANDING_NOTIFICATION_STATUSES]
+_ACTIVE_CANCELABLE_VALUES = [
+    AgentNotificationStatus.PENDING.value,
+    AgentNotificationStatus.PROCESSING.value,
+]
 
 _MAIN_AGENT_TARGET = f"{MAIN_AGENT_INSTANCE_PREFIX}%"
 
 
-async def enqueue_subagent_finished_notification(
-    snapshot: AgentSubordinateTaskSnapshot,
+def add_obligation_in_session(
+    session: Any,
     *,
+    kind: AgentNotificationKind,
+    session_id: str,
+    target_agent_code: str,
+    target_agent_instance_id: str,
+    run_id: str,
+    payload: dict[str, Any] | None = None,
+    nested_for_agent_code: str = "",
+    nested_call_id: str = "",
     sandbox_container_id: int | None = None,
     sandbox_container_generation: int = 0,
     sandbox_skill_metadata: tuple[str, ...] = (),
-) -> AgentNotificationSnapshot | None:
-    """Create one durable inbox item for the parent agent of a terminal subagent run."""
+) -> AgentNotification:
+    """Register an AWAITING obligation row on an already-open session.
 
-    payload = {
-        "run_id": snapshot.run_id,
-        "agent_code": snapshot.agent_code,
-        "agent_name": snapshot.agent_name,
-        "status": snapshot.status.value,
-        "result": snapshot.result,
-        "error": snapshot.error,
-    }
+    Created in the same transaction as the background task it tracks, so a
+    parent driver can never observe "no running task and no notification" — the
+    obligation is outstanding from the instant the task is born until its result
+    is consumed. The caller is responsible for committing.
+    """
     notification = AgentNotification(
         id=str(uuid4()),
-        session_id=snapshot.session_id,
-        target_agent_code=snapshot.parent_agent_code,
-        target_agent_instance_id=snapshot.parent_agent_instance_id,
-        nested_for_agent_code="",
-        nested_call_id="",
+        session_id=session_id,
+        target_agent_code=target_agent_code,
+        target_agent_instance_id=target_agent_instance_id,
+        nested_for_agent_code=nested_for_agent_code,
+        nested_call_id=nested_call_id,
         sandbox_container_id=sandbox_container_id,
         sandbox_container_generation=sandbox_container_generation,
         sandbox_skill_metadata=list(sandbox_skill_metadata),
-        kind=AgentNotificationKind.SUBAGENT_FINISHED.value,
-        status=AgentNotificationStatus.PENDING.value,
-        run_id=snapshot.run_id,
-        payload=payload,
+        kind=kind.value,
+        status=AgentNotificationStatus.AWAITING.value,
+        run_id=run_id,
+        payload=payload or {},
     )
-    async with get_async_session() as session:
-        try:
-            session.add(notification)
-            await session.commit()
-            await session.refresh(notification)
-        except IntegrityError:
-            await session.rollback()
-            existing = (await session.exec(
-                select(AgentNotification).where(
-                    AgentNotification.kind == AgentNotificationKind.SUBAGENT_FINISHED.value,
-                    AgentNotification.run_id == snapshot.run_id,
-                )
-            )).first()
-            return snapshot_from_notification(existing) if existing is not None else None
-
-    logger.debug(
-        "agent notification queued: %s session=%s run=%s target=%s",
-        notification.id,
-        notification.session_id,
-        notification.run_id,
-        notification.target_agent_code,
-    )
-    return snapshot_from_notification(notification)
+    session.add(notification)
+    return notification
 
 
-async def enqueue_sandbox_async_job_finished_notification(
-    snapshot: SandboxAsyncJobSnapshot,
-) -> AgentNotificationSnapshot | None:
-    payload = {
-        "status": snapshot.status.value,
-        "output_file": snapshot.output_file,
-        "output_bytes": snapshot.output_bytes,
-        "output_lines": snapshot.output_lines,
-        "exit_code": snapshot.exit_code,
-        "error": snapshot.error,
-    }
-    notification = AgentNotification(
-        id=str(uuid4()),
-        session_id=snapshot.session_id,
-        target_agent_code=snapshot.agent_code,
-        target_agent_instance_id=snapshot.agent_instance_id,
-        nested_for_agent_code=snapshot.nested_for_agent_code,
-        nested_call_id=snapshot.nested_call_id,
-        sandbox_container_id=snapshot.sandbox_container_id,
-        sandbox_container_generation=snapshot.sandbox_container_generation,
-        sandbox_skill_metadata=list(snapshot.sandbox_skill_metadata),
-        kind=AgentNotificationKind.SANDBOX_ASYNC_JOB_FINISHED.value,
-        status=AgentNotificationStatus.PENDING.value,
-        run_id=snapshot.run_id,
-        payload=payload,
+async def resolve_obligation_in_session(
+    session: Any,
+    *,
+    kind: AgentNotificationKind,
+    run_id: str,
+    ready: bool,
+    payload: dict[str, Any] | None = None,
+    error: str = "",
+) -> AgentNotification | None:
+    """Resolve a registered obligation on an already-open session.
+
+    ``ready=True`` flips AWAITING -> PENDING (result available, wakes the
+    parent); ``ready=False`` flips AWAITING -> CANCELED (no wake). Idempotent:
+    if the obligation is missing or already past AWAITING it is left untouched.
+    The caller is responsible for committing.
+    """
+    now = datetime.now()
+    notification = (await session.exec(
+        select(AgentNotification).where(
+            AgentNotification.kind == kind.value,
+            AgentNotification.run_id == run_id,
+        )
+    )).first()
+    if notification is None or notification.status != AgentNotificationStatus.AWAITING.value:
+        return notification
+    notification.status = (
+        AgentNotificationStatus.PENDING.value if ready else AgentNotificationStatus.CANCELED.value
     )
-    async with get_async_session() as session:
-        try:
-            session.add(notification)
-            await session.commit()
-            await session.refresh(notification)
-        except IntegrityError:
-            await session.rollback()
-            existing = (await session.exec(
-                select(AgentNotification).where(
-                    AgentNotification.kind == AgentNotificationKind.SANDBOX_ASYNC_JOB_FINISHED.value,
-                    AgentNotification.run_id == snapshot.run_id,
-                )
-            )).first()
-            return snapshot_from_notification(existing) if existing is not None else None
-    logger.debug(
-        "sandbox async job notification queued: %s session=%s run=%s target=%s",
-        notification.id,
-        notification.session_id,
-        notification.run_id,
-        notification.target_agent_code,
-    )
-    return snapshot_from_notification(notification)
+    if payload is not None:
+        notification.payload = payload
+    notification.error = error
+    notification.updated_at = now
+    if not ready:
+        notification.finished_at = now
+    session.add(notification)
+    return notification
 
 
 async def enqueue_user_message_notification(
@@ -283,18 +258,37 @@ async def has_pending_main_agent_notification(*, session_id: str) -> bool:
 
 
 async def has_active_session_notifications(*, session_id: str) -> bool:
+    """Session-wide liveness: any outstanding work anywhere in the session.
+
+    Single source of truth for ``run_state`` — covers in-flight obligations
+    (AWAITING), ready items (PENDING) and items being handled (PROCESSING).
+    """
     async with get_async_session() as session:
         notification_id = (await session.exec(
             select(AgentNotification.id)
             .where(
                 AgentNotification.session_id == session_id,
-                AgentNotification.status.in_([
-                    AgentNotificationStatus.PENDING.value,
-                    AgentNotificationStatus.PROCESSING.value,
-                ]),
+                AgentNotification.status.in_(_OUTSTANDING_VALUES),
             )
             .limit(1)
         )).first()
+        return notification_id is not None
+
+
+async def has_outstanding_target_notifications(
+    *,
+    session_id: str,
+    target_agent_instance_id: str | None = None,
+) -> bool:
+    # Target-scoped liveness: outstanding obligations (sub-agents / async jobs)
+    # owned by one instance; a driver goes dormant while this holds.
+    async with get_async_session() as session:
+        statement = select(AgentNotification.id).where(
+            AgentNotification.session_id == session_id,
+            AgentNotification.status.in_(_OUTSTANDING_VALUES),
+        )
+        statement = _filter_notification_target(statement, target_agent_instance_id)
+        notification_id = (await session.exec(statement.limit(1))).first()
         return notification_id is not None
 
 
@@ -350,6 +344,7 @@ async def cancel_session_notifications(
         session_id=session_id,
         error=error,
         instance_equals=target_agent_instance_id,
+        statuses=_OUTSTANDING_VALUES,
     )
 
 
@@ -388,15 +383,13 @@ async def _cancel_notifications(
     instance_equals: str | None = None,
     instance_like: str | None = None,
     spare_unclaimed_user_messages: bool = False,
+    statuses: list[str] | None = None,
 ) -> list[AgentNotificationSnapshot]:
     now = datetime.now()
     async with get_async_session() as session:
         statement = select(AgentNotification).where(
             AgentNotification.session_id == session_id,
-            AgentNotification.status.in_([
-                AgentNotificationStatus.PENDING.value,
-                AgentNotificationStatus.PROCESSING.value,
-            ]),
+            AgentNotification.status.in_(statuses or _ACTIVE_CANCELABLE_VALUES),
         )
         if instance_equals is not None:
             statement = statement.where(AgentNotification.target_agent_instance_id == instance_equals)

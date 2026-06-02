@@ -6,8 +6,10 @@ from sqlmodel import select, update
 from database import get_async_session
 from logger import get_logger
 from model.agent.subordinates import AgentSubordinateTask
+from schema.agent.notifications import AgentNotificationKind
 from schema.agent.subordinates import AgentSubordinateStatus, AgentSubordinateTaskSnapshot
 from schema.system_user.users import SystemUserRole
+from service.agent import notifications as agent_notifications
 
 
 logger = get_logger(__name__)
@@ -17,6 +19,13 @@ TERMINAL_SUBAGENT_STATUSES = {
     AgentSubordinateStatus.COMPLETED,
     AgentSubordinateStatus.FAILED,
     AgentSubordinateStatus.CANCELED,
+}
+
+# Statuses whose result the parent must integrate (wakes the parent driver).
+# CANCELED is resolved silently so an aborted child never wakes the parent.
+_PARENT_WAKING_STATUSES = {
+    AgentSubordinateStatus.COMPLETED,
+    AgentSubordinateStatus.FAILED,
 }
 
 
@@ -30,6 +39,9 @@ async def create_subagent_task(
     brief: str,
     nested_call_id: str,
     owner_id: int,
+    sandbox_container_id: int | None = None,
+    sandbox_container_generation: int = 0,
+    sandbox_skill_metadata: tuple[str, ...] = (),
 ) -> AgentSubordinateTaskSnapshot:
     now = datetime.now()
     run_id = str(uuid4())
@@ -50,6 +62,25 @@ async def create_subagent_task(
     )
     async with get_async_session() as session:
         session.add(task)
+        # Register the parent wake-up obligation in the same transaction so the
+        # parent driver can never see the child as neither running nor pending.
+        if parent_agent_code:
+            agent_notifications.add_obligation_in_session(
+                session,
+                kind=AgentNotificationKind.SUBAGENT_FINISHED,
+                session_id=session_id,
+                target_agent_code=parent_agent_code,
+                target_agent_instance_id=parent_agent_instance_id,
+                run_id=run_id,
+                payload={
+                    "run_id": run_id,
+                    "agent_code": agent_code,
+                    "agent_name": agent_name,
+                },
+                sandbox_container_id=sandbox_container_id,
+                sandbox_container_generation=sandbox_container_generation,
+                sandbox_skill_metadata=sandbox_skill_metadata,
+            )
         await session.commit()
         await session.refresh(task)
     logger.debug("subagent task created: %s", task.run_id)
@@ -86,37 +117,6 @@ async def list_subagent_tasks(
         )
         rows = (await session.exec(statement)).all()
         return [snapshot_from_task(task) for task in rows if _can_access_task(task, session_id, user_id, user_role)]
-
-
-async def has_running_subagent_tasks(*, session_id: str) -> bool:
-    async with get_async_session() as session:
-        run_id = (await session.exec(
-            select(AgentSubordinateTask.run_id)
-            .where(
-                AgentSubordinateTask.session_id == session_id,
-                AgentSubordinateTask.status == AgentSubordinateStatus.RUNNING.value,
-            )
-            .limit(1)
-        )).first()
-        return run_id is not None
-
-
-async def has_running_child_subagent_tasks(
-    *,
-    session_id: str,
-    parent_agent_instance_id: str,
-) -> bool:
-    async with get_async_session() as session:
-        run_id = (await session.exec(
-            select(AgentSubordinateTask.run_id)
-            .where(
-                AgentSubordinateTask.session_id == session_id,
-                AgentSubordinateTask.parent_agent_instance_id == parent_agent_instance_id,
-                AgentSubordinateTask.status == AgentSubordinateStatus.RUNNING.value,
-            )
-            .limit(1)
-        )).first()
-        return run_id is not None
 
 
 async def get_subagent_task_internal(run_id: str) -> AgentSubordinateTaskSnapshot | None:
@@ -197,6 +197,13 @@ async def _cancel_running_subagent_tasks(
             task.updated_at = now
             task.finished_at = now
             session.add(task)
+            await agent_notifications.resolve_obligation_in_session(
+                session,
+                kind=AgentNotificationKind.SUBAGENT_FINISHED,
+                run_id=task.run_id,
+                ready=False,
+                error=error,
+            )
         if not rows:
             return []
         await session.commit()
@@ -211,12 +218,23 @@ async def mark_stale_running_subagent_tasks_failed() -> list[AgentSubordinateTas
         rows = (await session.exec(
             select(AgentSubordinateTask).where(AgentSubordinateTask.status == AgentSubordinateStatus.RUNNING.value)
         )).all()
+        restart_error = "Subagent task was interrupted by backend restart."
         for task in rows:
             task.status = AgentSubordinateStatus.FAILED.value
-            task.error = "Subagent task was interrupted by backend restart."
+            task.error = restart_error
             task.updated_at = now
             task.finished_at = now
             session.add(task)
+            # Surface the restart failure to the recovered parent so it can
+            # finish its turn instead of waiting forever on a dead child.
+            await agent_notifications.resolve_obligation_in_session(
+                session,
+                kind=AgentNotificationKind.SUBAGENT_FINISHED,
+                run_id=task.run_id,
+                ready=True,
+                payload=_subagent_obligation_payload(task),
+                error=restart_error,
+            )
         if rows:
             await session.commit()
             for task in rows:
@@ -259,9 +277,31 @@ async def _finish_subagent_task(
             await session.rollback()
             current = await session.get(AgentSubordinateTask, run_id)
             return snapshot_from_task(current) if current is not None else None
+        # Flip the parent obligation in the same transaction: task-terminal and
+        # parent-wakeup commit atomically, so there is no check-then-act window.
+        refreshed = await session.get(AgentSubordinateTask, run_id)
+        await agent_notifications.resolve_obligation_in_session(
+            session,
+            kind=AgentNotificationKind.SUBAGENT_FINISHED,
+            run_id=run_id,
+            ready=status in _PARENT_WAKING_STATUSES,
+            payload=_subagent_obligation_payload(refreshed) if refreshed is not None else None,
+            error=error,
+        )
         await session.commit()
         current = await session.get(AgentSubordinateTask, run_id)
         return snapshot_from_task(current) if current is not None else None
+
+
+def _subagent_obligation_payload(task: AgentSubordinateTask) -> dict[str, object]:
+    return {
+        "run_id": task.run_id,
+        "agent_code": task.agent_code,
+        "agent_name": task.agent_name,
+        "status": _coerce_subagent_status(task.status).value,
+        "result": task.result,
+        "error": task.error,
+    }
 
 
 def snapshot_from_task(task: AgentSubordinateTask) -> AgentSubordinateTaskSnapshot:

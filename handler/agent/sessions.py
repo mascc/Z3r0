@@ -75,24 +75,24 @@ async def list_agent_sessions_handler(limit: int, user: AuthUser) -> CommonRespo
 async def list_agent_events_handler(
     session_id: str,
     user: AuthUser,
-    before_id: int | None = None,
+    before_seq: int | None = None,
     limit: int = agent_sessions.DEFAULT_REPLAY_EVENT_PAGE_SIZE,
 ) -> CommonResponse:
     result = await agent_sessions.replay_session_events_page(
         session_id=session_id,
         user_id=user.id,
         user_role=user.role,
-        before_id=before_id,
+        before_seq=before_seq,
         limit=limit,
     )
     if result is None:
         return CommonResponse(code=HTTPStatus.NOT_FOUND.value, message="agent session not found")
-    events, has_more, next_before_id = result
+    events, has_more, next_before_seq = result
     return CommonResponse(data=ListAgentEventsResponse(
         session_id=session_id,
         items=events,
         has_more=has_more,
-        next_before_id=next_before_id,
+        next_before_seq=next_before_seq,
     ))
 
 

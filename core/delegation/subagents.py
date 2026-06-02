@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -13,11 +13,12 @@ from agents import Agent, RunContextWrapper, Runner, Tool, function_tool
 
 from config import get_config
 from core.conversation.context_budget import build_context_run_config
-from core.runtime.context import AgentRuntimeContext, subagent_instance_id
-from core.runtime.notification_dispatch import (
-    forget_target_notifications,
-    signal_target_notifications,
+from core.runtime.context import (
+    SUBAGENT_INSTANCE_PREFIX,
+    AgentRuntimeContext,
+    subagent_instance_id,
 )
+from core.runtime.notification_dispatch import forget_target_notifications, is_main_agent_instance
 from core.runtime.input_items import build_user_message_item, text_input_content
 from core.runtime.partial_context import DeltaBuffer, discard_partial_stream, incomplete_segment_events, track_delta
 from core.runtime.streaming import StreamIdleTimeout, next_segment_scope
@@ -29,6 +30,7 @@ from database import get_async_session, get_engine
 from logger import get_logger
 from schema.agent.events import (
     AgentEventSchema,
+    AgentInputPart,
     DoneEvent,
     ErrorEvent,
     SubagentTaskEvent,
@@ -38,35 +40,64 @@ from schema.agent.events import (
     ToolResultEvent,
 )
 from schema.agent.subordinates import (
-    AgentSubordinateStatus,
     AgentSubordinateTaskSnapshot,
     AgentSubordinateTaskToolItem,
     AgentSubordinateTaskToolResult,
 )
 from service.agent import notifications as agent_notifications
-from service.agent.subordinates import TERMINAL_SUBAGENT_STATUSES as _TERMINAL_SUBAGENT_STATUSES
 from service.agent import subordinates as agent_subordinates
-from service.sandbox import async_jobs as sandbox_async_jobs
 
 
 logger = get_logger(__name__)
 
 
 @dataclass
-class _SubagentJob:
-    task: asyncio.Task[None]
-    session_id: str
-    parent_agent_instance_id: str
-    sandbox_container_id: int | None
+class _SubagentDriver:
+    # Resumable per-instance driver: caches the immutable bits to (re)run a
+    # subagent so it can go dormant while children run and be resumed by a kick.
+    # task is the live drive (None while dormant); start_lock serialises its
+    # launch/relaunch/dormant/cancel transitions.
+    snapshot: AgentSubordinateTaskSnapshot
+    child_agent: Agent
+    code_to_name: dict[str, str]
+    context: AgentRuntimeContext
+    start_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    task: asyncio.Task[None] | None = None
+    relaunch_attempts: int = 0
+
+    @property
+    def run_id(self) -> str:
+        return self.snapshot.run_id
+
+    @property
+    def session_id(self) -> str:
+        return self.snapshot.session_id
+
+    @property
+    def agent_instance_id(self) -> str:
+        return self.context.agent_instance_id
+
+    @property
+    def parent_agent_instance_id(self) -> str:
+        return self.snapshot.parent_agent_instance_id
+
+    @property
+    def sandbox_container_id(self) -> int | None:
+        return self.context.sandbox_container_id
 
 
-_jobs: dict[str, _SubagentJob] = {}
+_drivers: dict[str, _SubagentDriver] = {}
 _session_starters: dict[str, set[asyncio.Task[AgentSubordinateTaskSnapshot]]] = defaultdict(set)
-_jobs_lock = asyncio.Lock()
+_drivers_lock = asyncio.Lock()
 
 _SUBAGENT_RESULT_MAX_CHARS = 20000
 
 _CANCEL_MESSAGE = "Subagent task canceled."
+# Safety bound on consecutive self-relaunches after an idle drain still sees a
+# claimable notification (a race backstop, mirroring the main driver). On
+# exhaustion the run is failed rather than hot-looping.
+_MAX_SUBAGENT_RELAUNCH = 5
+_RELAUNCH_FAILURE_MESSAGE = "subagent driver could not make progress"
 
 
 def build_subagent_tools(
@@ -280,79 +311,79 @@ async def start_subagent_task_run(
         brief=brief,
         nested_call_id=nested_call_id,
         owner_id=context.user.id,
+        sandbox_container_id=context.sandbox_container_id,
+        sandbox_container_generation=context.sandbox_container_generation,
+        sandbox_skill_metadata=context.sandbox_skill_metadata,
     )
     await _mark_parent_session_running(snapshot, context)
-    runtime_context = _subagent_context(context, snapshot, agent_code)
-    async with _jobs_lock:
-        task = asyncio.create_task(
-            _run_subagent_task(
-                snapshot=snapshot,
-                child_agent=child_agent,
-                code_to_name=code_to_name,
-                context=runtime_context,
-            ),
-            name=f"subagent-{agent_code}-{snapshot.run_id}",
-        )
-        _jobs[snapshot.run_id] = _SubagentJob(
-            task=task,
-            session_id=snapshot.session_id,
-            parent_agent_instance_id=snapshot.parent_agent_instance_id,
-            sandbox_container_id=runtime_context.sandbox_container_id,
-        )
+    driver = _SubagentDriver(
+        snapshot=snapshot,
+        child_agent=child_agent,
+        code_to_name=code_to_name,
+        context=_subagent_context(context, snapshot, agent_code),
+    )
+    async with _drivers_lock:
+        _drivers[snapshot.run_id] = driver
+    async with driver.start_lock:
+        driver.task = _spawn_subagent_drive(driver, text_input_content(snapshot.brief))
     await _publish_task_snapshot(snapshot)
     logger.info("subagent task scheduled: %s agent=%s", snapshot.run_id, agent_code)
     return snapshot
 
 
+def _spawn_subagent_drive(
+    driver: _SubagentDriver,
+    initial_content: list[AgentInputPart] | None,
+) -> asyncio.Task[None]:
+    return asyncio.create_task(
+        _drive_subagent(driver, initial_content),
+        name=f"subagent-{driver.snapshot.agent_code}-{driver.run_id}",
+    )
+
+
 async def cancel_subagent_task_run(snapshot: AgentSubordinateTaskSnapshot) -> AgentSubordinateTaskSnapshot:
-    agent_instance_id = subagent_instance_id(snapshot.run_id)
-    async with _jobs_lock:
-        job = _jobs.get(snapshot.run_id)
-    publish_now = job is None or job.task.done()
-    if job is not None and not job.task.done():
-        job.task.cancel()
-    await cancel_agent_async_sandbox_commands(
-        session_id=snapshot.session_id,
-        agent_instance_id=agent_instance_id,
-    )
-    await agent_notifications.cancel_session_notifications(
-        snapshot.session_id,
-        _CANCEL_MESSAGE,
-        target_agent_instance_id=agent_instance_id,
-    )
-    await _cancel_child_subagent_runs(snapshot.session_id, agent_instance_id, _CANCEL_MESSAGE)
+    async with _drivers_lock:
+        driver = _drivers.get(snapshot.run_id)
+    if driver is not None:
+        task = await _stop_driver_task(driver)
+        if task is not None:
+            # Live drive handles the cancel teardown in its own except path.
+            await asyncio.gather(task, return_exceptions=True)
+            return await _latest_snapshot(snapshot)
+        # Dormant: no live task, so run the cancel teardown directly.
+        await _cancel_subagent(driver)
+        return await _latest_snapshot(snapshot)
+
     latest = await agent_subordinates.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
     snapshot = latest or snapshot
-    if publish_now:
-        await _publish_task_snapshot(snapshot)
+    await _publish_task_snapshot(snapshot)
     return snapshot
 
 
-async def cancel_sandbox_subagent_runs(container_id: int) -> bool:
-    async with _jobs_lock:
-        tasks = [
-            _jobs.pop(run_id).task
-            for run_id, job in list(_jobs.items())
-            if job.sandbox_container_id == container_id
-        ]
-    if not tasks:
-        return False
-    for task in tasks:
-        if not task.done():
+async def _stop_driver_task(driver: _SubagentDriver) -> asyncio.Task[None] | None:
+    """Cancel the driver's live drive task, if any. Returns the task to await."""
+    async with driver.start_lock:
+        task = driver.task
+        if task is not None and not task.done():
             task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    return True
+            return task
+    return None
+
+
+async def _latest_snapshot(snapshot: AgentSubordinateTaskSnapshot) -> AgentSubordinateTaskSnapshot:
+    latest = await agent_subordinates.get_subagent_task_internal(snapshot.run_id)
+    return latest or snapshot
+
+
+async def cancel_sandbox_subagent_runs(container_id: int) -> bool:
+    return await _cancel_drivers(lambda driver: driver.sandbox_container_id == container_id)
 
 
 async def cancel_session_subagent_runs(session_id: str) -> bool:
     starter_tasks = await _cancel_session_starters(session_id)
-    early_jobs = await _cancel_session_jobs(session_id)
     if starter_tasks:
         await asyncio.gather(*starter_tasks, return_exceptions=True)
-    late_jobs = await _cancel_session_jobs(session_id)
-    all_jobs = early_jobs + late_jobs
-    if all_jobs:
-        await asyncio.gather(*all_jobs, return_exceptions=True)
+    drivers_canceled = await _cancel_drivers(lambda driver: driver.session_id == session_id)
 
     snapshots = await agent_subordinates.cancel_running_subagent_tasks_for_session(
         session_id,
@@ -361,11 +392,33 @@ async def cancel_session_subagent_runs(session_id: str) -> bool:
     for snapshot in snapshots:
         await _publish_task_snapshot(snapshot)
 
-    return bool(starter_tasks or all_jobs or snapshots)
+    return bool(starter_tasks) or drivers_canceled or bool(snapshots)
+
+
+async def _cancel_drivers(predicate: Callable[[_SubagentDriver], bool]) -> bool:
+    # Cancel matching drivers (live via their except path, dormant inline);
+    # returns whether any matched.
+    async with _drivers_lock:
+        matched = [driver for driver in _drivers.values() if predicate(driver)]
+    if not matched:
+        return False
+    live: list[asyncio.Task[None]] = []
+    dormant: list[_SubagentDriver] = []
+    for driver in matched:
+        task = await _stop_driver_task(driver)
+        if task is not None:
+            live.append(task)
+        else:
+            dormant.append(driver)
+    if live:
+        await asyncio.gather(*live, return_exceptions=True)
+    for driver in dormant:
+        await _cancel_subagent(driver)
+    return True
 
 
 async def _track_subagent_starter(session_id: str, task: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
-    async with _jobs_lock:
+    async with _drivers_lock:
         _session_starters[session_id].add(task)
 
     def _forget_starter(completed: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
@@ -380,7 +433,7 @@ async def _track_subagent_starter(session_id: str, task: asyncio.Task[AgentSubor
 
 
 async def _cancel_session_starters(session_id: str) -> list[asyncio.Task[AgentSubordinateTaskSnapshot]]:
-    async with _jobs_lock:
+    async with _drivers_lock:
         starters = list(_session_starters.pop(session_id, ()))
     pending = [task for task in starters if not task.done()]
     for task in pending:
@@ -388,21 +441,12 @@ async def _cancel_session_starters(session_id: str) -> list[asyncio.Task[AgentSu
     return pending
 
 
-async def _cancel_session_jobs(session_id: str) -> list[asyncio.Task[None]]:
-    async with _jobs_lock:
-        tasks: list[asyncio.Task[None]] = []
-        for run_id, job in list(_jobs.items()):
-            if job.session_id != session_id:
-                continue
-            _jobs.pop(run_id, None)
-            if not job.task.done():
-                job.task.cancel()
-                tasks.append(job.task)
-        return tasks
-
-
 async def start_subagent_runtime() -> None:
     await agent_notifications.reset_processing_notifications_all()
+    # Marking a stale task failed flips its parent obligation to PENDING in the
+    # same transaction, so the recovered parent driver will integrate it. We
+    # only need to clear obligations the dead sub-agent itself owned (its async
+    # jobs / child sub-agents) since no driver will ever consume those.
     stale_snapshots = await agent_subordinates.mark_stale_running_subagent_tasks_failed()
     for snapshot in stale_snapshots:
         await agent_notifications.cancel_session_notifications(
@@ -410,25 +454,18 @@ async def start_subagent_runtime() -> None:
             snapshot.error,
             target_agent_instance_id=subagent_instance_id(snapshot.run_id),
         )
-        await _queue_parent_notification(snapshot)
 
 
 async def stop_subagent_runtime() -> None:
-    async with _jobs_lock:
+    async with _drivers_lock:
         starter_tasks = [task for tasks in _session_starters.values() for task in tasks if not task.done()]
         _session_starters.clear()
-        jobs = list(_jobs.values())
-        _jobs.clear()
-    for task in starter_tasks:
-        task.cancel()
-    for job in jobs:
-        if not job.task.done():
-            job.task.cancel()
-    await asyncio.gather(
-        *starter_tasks,
-        *(job.task for job in jobs),
-        return_exceptions=True,
-    )
+        driver_tasks = [driver.task for driver in _drivers.values() if driver.task is not None]
+        _drivers.clear()
+    for task in (*starter_tasks, *driver_tasks):
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*starter_tasks, *driver_tasks, return_exceptions=True)
 
     snapshots = await agent_subordinates.cancel_running_subagent_tasks(_CANCEL_MESSAGE)
     for snapshot in snapshots:
@@ -443,164 +480,215 @@ def _publish_event(session_id: str, event: AgentEventSchema) -> None:
 
 
 async def _publish_task_snapshot(snapshot: AgentSubordinateTaskSnapshot) -> None:
-    _publish_event(snapshot.session_id, _task_event(snapshot))
-    if snapshot.status in _TERMINAL_SUBAGENT_STATUSES:
-        await _notify_session_idle(snapshot.session_id)
+    from core.runtime.session import get_agent_pool
+
+    event = _task_event(snapshot)
+    if not get_agent_pool().publish(snapshot.session_id, event):
+        # no pooled+loaded session (e.g. boot-time stale failure): persist directly
+        # so the durable timeline reflects the final status on the next refresh
+        from service.agent.event_log import persist_subagent_event_unpooled
+
+        await persist_subagent_event_unpooled(snapshot.session_id, event)
 
 
-async def _run_subagent_task(
-    *,
-    snapshot: AgentSubordinateTaskSnapshot,
-    child_agent: Agent,
-    code_to_name: dict[str, str],
-    context: AgentRuntimeContext,
+async def resume_target_instance(session_id: str, agent_instance_id: str) -> None:
+    # The single resume primitive: after a background task flips its owner's
+    # obligation to PENDING, wake that owner's driver. Main routes to the pool,
+    # sub-agents to their in-process driver. No-op if already running/not resident.
+    if not agent_instance_id:
+        return
+    if is_main_agent_instance(agent_instance_id):
+        from core.runtime.session import get_agent_pool
+
+        await get_agent_pool().resume_session(session_id)
+        return
+    await resume_subagent_instance(agent_instance_id.removeprefix(SUBAGENT_INSTANCE_PREFIX))
+
+
+async def resume_subagent_instance(run_id: str) -> None:
+    """Relaunch a dormant sub-agent driver so it claims freshly-pending work."""
+    async with _drivers_lock:
+        driver = _drivers.get(run_id)
+    if driver is None:
+        return
+    async with driver.start_lock:
+        if driver.task is not None and not driver.task.done():
+            return
+        driver.task = _spawn_subagent_drive(driver, None)
+
+
+async def _drive_subagent(
+    driver: _SubagentDriver,
+    initial_content: list[AgentInputPart] | None,
 ) -> None:
+    # One non-blocking drive pass for a sub-agent instance, mirroring the main
+    # driver: drain ready turns then settle (relaunch / dormant / complete).
+    try:
+        await run_until_idle(
+            session_id=driver.session_id,
+            agent_instance_id=driver.agent_instance_id,
+            initial_content=initial_content,
+            run_turn=_subagent_run_turn(driver),
+        )
+        # Settle inside the guard so a cancel landing as the run finishes still
+        # terminalises the record instead of stranding the parent obligation.
+        await _settle_subagent(driver)
+    except asyncio.CancelledError:
+        await _cancel_subagent(driver)
+        raise
+    except Exception as exc:
+        logger.exception("subagent drive failed: %s", driver.run_id)
+        await _fail_subagent(driver, str(exc) or "subagent failed")
+
+
+async def _settle_subagent(driver: _SubagentDriver) -> None:
+    # Post-drain fate: relaunch on a claim race, go dormant while children run,
+    # else finish.
+    inst = driver.agent_instance_id
+    async with driver.start_lock:
+        if await agent_notifications.has_pending_notification(
+            session_id=driver.session_id, target_agent_instance_id=inst,
+        ):
+            driver.relaunch_attempts += 1
+            if driver.relaunch_attempts > _MAX_SUBAGENT_RELAUNCH:
+                logger.error("subagent driver relaunch budget exhausted run=%s", driver.run_id)
+                driver.task = asyncio.create_task(
+                    _fail_subagent(driver, _RELAUNCH_FAILURE_MESSAGE),
+                    name=f"subagent-fail-{driver.run_id}",
+                )
+                return
+            driver.task = _spawn_subagent_drive(driver, None)
+            return
+        if await agent_notifications.has_outstanding_target_notifications(
+            session_id=driver.session_id, target_agent_instance_id=inst,
+        ):
+            # Children/jobs still running: go dormant; their completion kicks us back.
+            driver.relaunch_attempts = 0
+            driver.task = None
+            return
+    await _complete_subagent(driver)
+
+
+def _subagent_run_turn(driver: _SubagentDriver) -> Callable[[TurnTrigger], Any]:
+    # Per-drive turn executor; rebuilds a fresh memory session, reuses the
+    # cached child agent and identity (nested tags / segment scope).
+    snapshot = driver.snapshot
+    child_agent = driver.child_agent
+    context = driver.context
+    agent_config = get_config().agents.get(snapshot.agent_code)
+    max_turns = get_config().agent_runtime.subordinate_max_turns
     memory_session = Z3r0Session(
         session_id=snapshot.session_id,
         engine=get_engine(),
         viewing_agent_code=snapshot.agent_code,
-        agent_code_to_name=code_to_name,
+        agent_code_to_name=driver.code_to_name,
         nested_for_agent_code=snapshot.parent_agent_code,
         nested_call_id=snapshot.nested_call_id,
     )
-    max_turns = get_config().agent_runtime.subordinate_max_turns
-    try:
-        agent_config = get_config().agents.get(snapshot.agent_code)
 
-        async def _run_turn(trigger: TurnTrigger) -> Any:
-            user_input = [build_user_message_item(trigger.content)]
-            if agent_config is not None:
-                await memory_session.compact_if_needed(
-                    agent_config=agent_config,
-                    incoming_items=user_input,
-                )
-            stream = Runner.run_streamed(
-                starting_agent=child_agent,
-                input=user_input,
-                session=memory_session,
-                context=context,
-                max_turns=max_turns,
-                run_config=build_context_run_config(agent_config) if agent_config is not None else None,
-            )
-            segment_scope = _next_subagent_segment_scope(context)
-            buffers: dict[str, DeltaBuffer] = {}
-            try:
-                async for event in iter_interruptible_events(
-                    stream,
-                    session_id=snapshot.session_id,
-                    agent_instance_id=context.agent_instance_id,
-                    current_agent_name=child_agent.name,
-                    segment_scope=segment_scope,
-                ):
-                    track_delta(buffers, event)
-                    _publish_event(snapshot.session_id, _tag_nested(event, snapshot))
-                    await _update_progress_from_event(snapshot, event)
-                buffers.clear()
-            except (InterruptSignal, asyncio.CancelledError):
-                # Both paths end the subagent turn mid-flight; emit boundary +
-                # done so the parent's live projection sees in-flight nested
-                # deltas as finalized and clients don't get a dangling stream
-                # on reconnect. Partial buffers are dropped, not persisted.
-                boundary_events = incomplete_segment_events(buffers, agent_name=child_agent.name)
-                await discard_partial_stream(stream, buffers, log_label="subagent")
-                for evt in boundary_events:
-                    _publish_event(snapshot.session_id, _tag_nested(evt, snapshot))
-                _publish_event(snapshot.session_id, _tag_nested(
-                    DoneEvent(created_at=datetime.now(), agent_name=child_agent.name),
-                    snapshot,
-                ))
-                raise
-            except StreamIdleTimeout as exc:
-                await discard_partial_stream(stream, buffers, log_label="subagent")
-                raise RuntimeError(str(exc)) from exc
-            except Exception:
-                await discard_partial_stream(stream, buffers, log_label="subagent")
-                raise
-            return stream
+    async def _run_turn(trigger: TurnTrigger) -> Any:
+        user_input = [build_user_message_item(trigger.content)]
+        if agent_config is not None:
+            await memory_session.compact_if_needed(agent_config=agent_config, incoming_items=user_input)
+        stream = Runner.run_streamed(
+            starting_agent=child_agent,
+            input=user_input,
+            session=memory_session,
+            context=context,
+            max_turns=max_turns,
+            run_config=build_context_run_config(agent_config) if agent_config is not None else None,
+        )
+        buffers: dict[str, DeltaBuffer] = {}
+        try:
+            async for event in iter_interruptible_events(
+                stream,
+                session_id=snapshot.session_id,
+                agent_instance_id=context.agent_instance_id,
+                current_agent_name=child_agent.name,
+                segment_scope=_next_subagent_segment_scope(context),
+            ):
+                track_delta(buffers, event)
+                _publish_event(snapshot.session_id, _tag_nested(event, snapshot))
+                await _update_progress_from_event(snapshot, event)
+            # Finalize segments left open by providers without a text-done
+            # event (e.g. Chat Completions); otherwise the text is never persisted.
+            for finalize_event in incomplete_segment_events(buffers, agent_name=child_agent.name):
+                _publish_event(snapshot.session_id, _tag_nested(finalize_event, snapshot))
+            buffers.clear()
+        except (InterruptSignal, asyncio.CancelledError):
+            # Both paths end the turn mid-flight; emit boundary + done so the
+            # parent's live projection finalizes in-flight nested deltas and
+            # clients don't get a dangling stream. Partial buffers are dropped.
+            boundary_events = incomplete_segment_events(buffers, agent_name=child_agent.name)
+            await discard_partial_stream(stream, buffers, log_label="subagent")
+            for evt in boundary_events:
+                _publish_event(snapshot.session_id, _tag_nested(evt, snapshot))
+            _publish_event(snapshot.session_id, _tag_nested(
+                DoneEvent(created_at=datetime.now(), agent_name=child_agent.name), snapshot,
+            ))
+            raise
+        except StreamIdleTimeout as exc:
+            await discard_partial_stream(stream, buffers, log_label="subagent")
+            raise RuntimeError(str(exc)) from exc
+        except Exception:
+            await discard_partial_stream(stream, buffers, log_label="subagent")
+            raise
+        return stream
 
-        async def _has_background() -> bool:
-            return await _subagent_has_running_background_work(
-                snapshot.session_id, context.agent_instance_id,
-            )
-
-        await run_until_idle(
-            session_id=snapshot.session_id,
-            agent_instance_id=context.agent_instance_id,
-            initial_content=text_input_content(snapshot.brief),
-            run_turn=_run_turn,
-            has_background_work=_has_background,
-        )
-
-        completed = await agent_subordinates.complete_subagent_task(
-            snapshot.run_id,
-            await _subagent_assistant_output(snapshot),
-        )
-        if completed is not None:
-            await _queue_parent_notification(completed, context)
-            await _publish_task_snapshot(completed)
-    except asyncio.CancelledError:
-        await cancel_agent_async_sandbox_commands(
-            session_id=snapshot.session_id,
-            agent_instance_id=context.agent_instance_id,
-        )
-        await agent_notifications.cancel_session_notifications(
-            snapshot.session_id,
-            _CANCEL_MESSAGE,
-            target_agent_instance_id=context.agent_instance_id,
-        )
-        await _cancel_child_subagent_runs(snapshot.session_id, context.agent_instance_id, _CANCEL_MESSAGE)
-        canceled = await agent_subordinates.cancel_subagent_task_record(snapshot.run_id, _CANCEL_MESSAGE)
-        if canceled is not None:
-            await _queue_parent_notification(canceled, context)
-            await _publish_task_snapshot(canceled)
-    except Exception as exc:
-        logger.exception("subagent task failed: %s", snapshot.run_id)
-        error_event = ErrorEvent(
-            created_at=datetime.now(),
-            agent_name=child_agent.name,
-            message=f"Subagent failed: {exc}",
-        )
-        tagged_error = _tag_nested(error_event, snapshot)
-        _publish_event(snapshot.session_id, tagged_error)
-        await agent_notifications.cancel_session_notifications(
-            snapshot.session_id,
-            str(exc) or "subagent failed",
-            target_agent_instance_id=context.agent_instance_id,
-        )
-        await _cancel_child_subagent_runs(snapshot.session_id, context.agent_instance_id, str(exc) or "subagent failed")
-        failed = await agent_subordinates.fail_subagent_task(snapshot.run_id, str(exc) or "subagent failed")
-        if failed is not None:
-            await _queue_parent_notification(failed, context)
-            await _publish_task_snapshot(failed)
-    finally:
-        await cancel_agent_async_sandbox_commands(
-            session_id=snapshot.session_id,
-            agent_instance_id=context.agent_instance_id,
-        )
-        await forget_target_notifications(context.agent_instance_id)
-        async with _jobs_lock:
-            current = _jobs.get(snapshot.run_id)
-            if current is not None and current.task is asyncio.current_task():
-                _jobs.pop(snapshot.run_id, None)
-            has_running = any(
-                job.session_id == snapshot.session_id and not job.task.done()
-                for job in _jobs.values()
-            )
-        if not has_running:
-            await _mark_parent_session_stopped(snapshot.session_id)
-            await _notify_session_idle(snapshot.session_id)
+    return _run_turn
 
 
-async def _subagent_has_running_background_work(session_id: str, agent_instance_id: str) -> bool:
-    if await sandbox_async_jobs.count_running_async_jobs_for_agent(
-        session_id=session_id,
-        agent_instance_id=agent_instance_id,
-    ):
-        return True
-    return await agent_subordinates.has_running_child_subagent_tasks(
-        session_id=session_id,
-        parent_agent_instance_id=agent_instance_id,
+async def _complete_subagent(driver: _SubagentDriver) -> None:
+    # Terminal flip + parent obligation (AWAITING -> PENDING) commit atomically; then kick the parent.
+    output = await _subagent_assistant_output(driver.snapshot)
+    completed = await agent_subordinates.complete_subagent_task(driver.run_id, output)
+    if completed is not None:
+        await _publish_task_snapshot(completed)
+        await resume_target_instance(driver.session_id, driver.parent_agent_instance_id)
+    await _cleanup_subagent(driver)
+
+
+async def _fail_subagent(driver: _SubagentDriver, message: str) -> None:
+    _publish_event(driver.session_id, _tag_nested(
+        ErrorEvent(created_at=datetime.now(), agent_name=driver.child_agent.name, message=f"Subagent failed: {message}"),
+        driver.snapshot,
+    ))
+    await _teardown_subtree(driver, message)
+    failed = await agent_subordinates.fail_subagent_task(driver.run_id, message)
+    if failed is not None:
+        await _publish_task_snapshot(failed)
+        await resume_target_instance(driver.session_id, driver.parent_agent_instance_id)
+    await _cleanup_subagent(driver)
+
+
+async def _cancel_subagent(driver: _SubagentDriver) -> None:
+    await _teardown_subtree(driver, _CANCEL_MESSAGE)
+    canceled = await agent_subordinates.cancel_subagent_task_record(driver.run_id, _CANCEL_MESSAGE)
+    if canceled is not None:
+        await _publish_task_snapshot(canceled)
+    # CANCELED resolves the obligation silently (no continuation turn) but still
+    # kicks the parent so a dormant parent re-evaluates and an idle main settles.
+    await resume_target_instance(driver.session_id, driver.parent_agent_instance_id)
+    await _cleanup_subagent(driver)
+
+
+async def _teardown_subtree(driver: _SubagentDriver, message: str) -> None:
+    """Cancel a sub-agent's owned background work (async jobs + child sub-agents)."""
+    await cancel_agent_async_sandbox_commands(
+        session_id=driver.session_id, agent_instance_id=driver.agent_instance_id,
     )
+    await agent_notifications.cancel_session_notifications(
+        driver.session_id, message, target_agent_instance_id=driver.agent_instance_id,
+    )
+    await _cancel_child_subagent_runs(driver.session_id, driver.agent_instance_id, message)
+
+
+async def _cleanup_subagent(driver: _SubagentDriver) -> None:
+    """Drop a terminal sub-agent's in-memory state (signals + driver registry)."""
+    await forget_target_notifications(driver.agent_instance_id)
+    async with _drivers_lock:
+        if _drivers.get(driver.run_id) is driver:
+            _drivers.pop(driver.run_id, None)
 
 
 def _next_subagent_segment_scope(context: AgentRuntimeContext) -> str:
@@ -609,18 +697,10 @@ def _next_subagent_segment_scope(context: AgentRuntimeContext) -> str:
 
 
 async def _cancel_child_subagent_runs(session_id: str, parent_agent_instance_id: str, error: str) -> None:
-    async with _jobs_lock:
-        tasks: list[asyncio.Task[None]] = []
-        for run_id, job in list(_jobs.items()):
-            if job.session_id != session_id or job.parent_agent_instance_id != parent_agent_instance_id:
-                continue
-            _jobs.pop(run_id, None)
-            if not job.task.done():
-                job.task.cancel()
-                tasks.append(job.task)
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-
+    await _cancel_drivers(
+        lambda driver: driver.session_id == session_id
+        and driver.parent_agent_instance_id == parent_agent_instance_id
+    )
     snapshots = await agent_subordinates.cancel_running_child_subagent_tasks(
         session_id=session_id,
         parent_agent_instance_id=parent_agent_instance_id,
@@ -668,31 +748,6 @@ def _task_event(snapshot: AgentSubordinateTaskSnapshot) -> AgentEventSchema:
     )
 
 
-async def _queue_parent_notification(
-    snapshot: AgentSubordinateTaskSnapshot,
-    context: AgentRuntimeContext | None = None,
-) -> None:
-    if not snapshot.parent_agent_code:
-        return
-    if snapshot.status == AgentSubordinateStatus.CANCELED:
-        return
-    try:
-        await agent_notifications.enqueue_subagent_finished_notification(
-            snapshot,
-            sandbox_container_id=context.sandbox_container_id if context else None,
-            sandbox_container_generation=context.sandbox_container_generation if context else 0,
-            sandbox_skill_metadata=context.sandbox_skill_metadata if context else (),
-        )
-    except Exception:
-        logger.exception("failed to queue parent notification for subagent task: %s", snapshot.run_id)
-        return
-    if context is not None:
-        try:
-            await signal_target_notifications(snapshot.parent_agent_instance_id)
-        except Exception:
-            logger.exception("failed to signal parent notification: %s", snapshot.run_id)
-
-
 def _tag_nested(event: AgentEventSchema, snapshot: AgentSubordinateTaskSnapshot) -> AgentEventSchema:
     if not hasattr(event, "nested_for"):
         return event
@@ -717,24 +772,6 @@ async def _mark_parent_session_running(
         )
     except Exception:
         logger.debug("failed to mark parent session running: %s", snapshot.session_id, exc_info=True)
-
-
-async def _mark_parent_session_stopped(session_id: str) -> None:
-    try:
-        from service.agent import sessions as agent_sessions
-
-        await agent_sessions.mark_session_stopped(session_id)
-    except Exception:
-        logger.debug("failed to mark parent session stopped: %s", session_id, exc_info=True)
-
-
-async def _notify_session_idle(session_id: str) -> None:
-    try:
-        from core.runtime.session import get_agent_pool
-
-        await get_agent_pool().notify_idle(session_id)
-    except Exception:
-        logger.debug("failed to notify session idle: %s", session_id, exc_info=True)
 
 
 def _subagent_context(

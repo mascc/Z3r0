@@ -45,6 +45,11 @@ class DatabaseConfig(StrictConfigModel):
     database: str = Field(default="z3r0")
     username: str = Field(default="")
     password: str = Field(default="")
+    pool_size: int = Field(default=32)
+    max_overflow: int = Field(default=32)
+    pool_timeout_seconds: int = Field(default=30)
+    pool_recycle_seconds: int = Field(default=1800)
+    pool_pre_ping: bool = Field(default=True)
 
 
 # agent config

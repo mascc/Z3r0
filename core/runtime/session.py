@@ -15,6 +15,7 @@ from core.conversation.context_budget import build_context_run_config
 from core.runtime.context import AgentRuntimeContext, main_agent_instance_id
 from core.runtime.input_items import build_user_message_item, display_text_from_content
 from core.runtime.live_projection import LiveEventProjection
+from core.runtime.timeline import TimelineLogWriter, is_persistable, timeline_item_key
 from core.runtime.notification_dispatch import signal_target_notifications
 from core.runtime.partial_context import DeltaBuffer, discard_partial_stream, incomplete_segment_events, track_delta
 from core.runtime.streaming import StreamIdleTimeout, next_segment_scope
@@ -30,6 +31,7 @@ from schema.agent.events import (
     DoneEvent,
     ErrorEvent,
     RunStateEvent,
+    TurnBoundaryEvent,
     UserMessageEvent,
 )
 from schema.agent.notifications import AgentNotificationSnapshot
@@ -39,6 +41,11 @@ from service.agent import notifications as agent_notifications
 logger = get_logger(__name__)
 
 _SUBSCRIBER_REBASE_THRESHOLD = 512
+# Self-heal bound: how many times a driver may relaunch itself to drain
+# outstanding work after an abnormal loop exit before it gives up and cancels
+# the remaining work (prevents a hot relaunch loop on a persistent fault).
+_MAX_DRIVER_RELAUNCH = 5
+_DRIVER_RELAUNCH_BACKOFF_SECONDS = 0.5
 
 
 class AgentSession:
@@ -50,6 +57,11 @@ class AgentSession:
         self._current_task: asyncio.Task | None = None
         self._subscribers: set[asyncio.Queue[AgentEventSchema]] = set()
         self._live_projection = LiveEventProjection()
+        # per-session timeline log: monotonic seq counter + first-seen key map
+        self._seq: int = 0
+        self._item_seq: dict[str, int] = {}
+        self._timeline_loaded = False
+        self._log_writer = TimelineLogWriter(session_id)
         self._main_agent_code: str = ""
         self._tool_snapshot: AgentToolSnapshot | None = None
         self._agent_graph: SessionAgentGraph | None = None
@@ -57,6 +69,10 @@ class AgentSession:
     def is_running(self) -> bool:
         task = self._current_task
         return task is not None and not task.done()
+
+    @property
+    def timeline_loaded(self) -> bool:
+        return self._timeline_loaded
 
     def has_subscribers(self) -> bool:
         return bool(self._subscribers)
@@ -86,9 +102,10 @@ class AgentSession:
                 sandbox_container_id=context.sandbox_container_id,
                 sandbox_container_generation=context.sandbox_container_generation,
             )
+            await self._ensure_timeline_loaded()
             self._publish_run_state(True)
             task = asyncio.create_task(
-                self._run_background_turn(content, agent_code, context),
+                self._drive(content, agent_code, context),
                 name=f"agent-turn-{self.session_id}",
             )
             self._current_task = task
@@ -99,11 +116,8 @@ class AgentSession:
         agent_code: str,
         context: AgentRuntimeContext,
     ) -> None:
-        """Queue a user message as a high-priority notification for the running loop.
-
-        Called instead of ``interrupt`` so that the ``run_until_idle`` loop
-        picks it up at the next safe point without destroying in-flight state.
-        """
+        # Queue a high-priority notification (instead of interrupting) so the
+        # running loop preempts at its next safe point without losing state.
         target_instance = context.agent_instance_id or main_agent_instance_id(
             context.session_id, context.user.id, agent_code,
         )
@@ -128,12 +142,10 @@ class AgentSession:
             target_agent_code=agent_code,
         ))
 
-    async def start_notification_recovery(self, context: AgentRuntimeContext) -> bool:
-        """Start processing pending notifications after a server restart.
-
-        Unlike ``start_turn``, this does not run an initial model turn; it
-        goes directly to the notification consumption loop via ``run_until_idle``.
-        """
+    async def start_notification_recovery(self, context: AgentRuntimeContext, *, recovered: bool = True) -> bool:
+        # Launch a driver that drains pending main notifications with no initial
+        # turn. recovered=True (boot) surfaces queued user bubbles never shown in
+        # this process; recovered=False is the in-process resume kick.
         async with self._start_lock:
             if self.is_running():
                 return False
@@ -147,52 +159,14 @@ class AgentSession:
                 sandbox_container_id=context.sandbox_container_id,
                 sandbox_container_generation=context.sandbox_container_generation,
             )
+            await self._ensure_timeline_loaded()
             self._publish_run_state(True)
             task = asyncio.create_task(
-                self._run_background_recovery(context),
+                self._drive(None, context.agent_code or "", context, recovered=recovered),
                 name=f"agent-recovery-{self.session_id}",
             )
             self._current_task = task
             return True
-
-    async def _run_background_recovery(self, context: AgentRuntimeContext) -> None:
-        async with self._turn_lock:
-            task = asyncio.current_task()
-            self._current_task = task
-            try:
-                context.agent_code = context.agent_code or ""
-                if not context.agent_instance_id:
-                    context.agent_instance_id = main_agent_instance_id(
-                        context.session_id, context.user.id, context.agent_code,
-                    )
-
-                async def _run_turn(trigger: TurnTrigger) -> Any:
-                    if trigger.notification is not None and trigger.notification.is_user_message:
-                        trigger = replace_trigger(trigger, emit_user_event=True)
-                    return await self._execute_turn(trigger, context.agent_code, context)
-
-                async def _has_background() -> bool:
-                    return await _has_active_session_runtime(self.session_id)
-
-                await run_until_idle(
-                    session_id=self.session_id,
-                    agent_instance_id=context.agent_instance_id,
-                    initial_content=None,
-                    run_turn=_run_turn,
-                    has_background_work=_has_background,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.exception("agent notification recovery failed session=%s", self.session_id)
-                await _force_mark_session_stopped(self.session_id, error=str(exc) or "notification recovery failed")
-                await self._publish(ErrorEvent(created_at=datetime.now(), message=str(exc) or "notification recovery failed"))
-                await self._publish(DoneEvent(created_at=datetime.now()))
-            finally:
-                await _mark_session_stopped(self.session_id)
-                if self._current_task is task:
-                    self._current_task = None
-                await self._publish_idle_if_inactive()
 
     async def interrupt(self) -> bool:
         task = self._current_task
@@ -243,6 +217,8 @@ class AgentSession:
         await self.close()
 
     async def close(self) -> None:
+        await self._log_writer.stop()
+        self._timeline_loaded = False
         await self._dispose_agent_graph()
 
     def uses_sandbox_container(self, container_id: int) -> bool:
@@ -275,46 +251,71 @@ class AgentSession:
             turn_context = context
             turn_agent_code = agent_code
 
-        graph = await self._ensure_agent_graph(turn_agent_code, turn_context)
-        agent = graph.get(turn_agent_code)
-        turn_scope = _next_turn_scope(turn_context)
-
-        if trigger.emit_user_event:
-            await self._publish(UserMessageEvent(
-                created_at=datetime.now(),
-                content=trigger.content,
-                display_text=display_text_from_content(trigger.content),
-                target_agent_code=turn_agent_code,
-            ))
-
-        memory_session = Z3r0Session(
-            session_id=self.session_id,
-            engine=get_engine(),
-            viewing_agent_code=turn_agent_code,
-            agent_code_to_name=graph.code_to_name(),
-            nested_for_agent_code=turn_context.nested_for_agent_code,
-            nested_call_id=turn_context.nested_call_id,
-        )
-
-        user_input = [build_user_message_item(trigger.content)]
-        agent_config = get_config().agents.get(turn_agent_code)
-        if agent_config is not None:
-            await memory_session.compact_if_needed(
-                agent_config=agent_config,
-                incoming_items=user_input,
-            )
-
-        stream = Runner.run_streamed(
-            starting_agent=agent,
-            session=memory_session,
-            input=user_input,
-            context=turn_context,
-            max_turns=get_config().agent_runtime.main_max_turns,
-            run_config=build_context_run_config(agent_config) if agent_config is not None else None,
-        )
-
         def _tag(event: AgentEventSchema) -> AgentEventSchema:
             return _tag_notification_event(event, turn_context) if trigger.has_notification else event
+
+        # Setup phase (graph bind, compaction, runner build) runs under the same
+        # exception protection as the stream: a failure here is surfaced as a
+        # finalized Error+Done turn instead of escaping and tearing down the
+        # session driver. Interrupt/cancel must still propagate.
+        try:
+            graph = await self._ensure_agent_graph(turn_agent_code, turn_context)
+            agent = graph.get(turn_agent_code)
+            turn_scope = _next_turn_scope(turn_context)
+
+            if trigger.emit_user_event:
+                await self._publish(UserMessageEvent(
+                    created_at=datetime.now(),
+                    content=trigger.content,
+                    display_text=display_text_from_content(trigger.content),
+                    target_agent_code=turn_agent_code,
+                ))
+            elif trigger.has_notification and not trigger.notification.is_user_message:
+                # A continuation driven by a hidden notification (e.g. a subagent
+                # completion fed back as a user-role context item) starts a new
+                # agent turn with no visible user bubble. Emit a turn boundary so
+                # the transcript separates it from the previous turn, matching the
+                # boundary a real user message would create.
+                await self._publish(_tag(
+                    TurnBoundaryEvent(created_at=datetime.now(), agent_name=agent.name),
+                ))
+
+            memory_session = Z3r0Session(
+                session_id=self.session_id,
+                engine=get_engine(),
+                viewing_agent_code=turn_agent_code,
+                agent_code_to_name=graph.code_to_name(),
+                nested_for_agent_code=turn_context.nested_for_agent_code,
+                nested_call_id=turn_context.nested_call_id,
+            )
+
+            user_input = [build_user_message_item(trigger.content)]
+            agent_config = get_config().agents.get(turn_agent_code)
+            if agent_config is not None:
+                await memory_session.compact_if_needed(
+                    agent_config=agent_config,
+                    incoming_items=user_input,
+                )
+
+            stream = Runner.run_streamed(
+                starting_agent=agent,
+                session=memory_session,
+                input=user_input,
+                context=turn_context,
+                max_turns=get_config().agent_runtime.main_max_turns,
+                run_config=build_context_run_config(agent_config) if agent_config is not None else None,
+            )
+        except (InterruptSignal, asyncio.CancelledError):
+            raise
+        except Exception as exc:
+            logger.exception("agent turn setup failed session=%s: %s", self.session_id, exc)
+            await self._publish(_tag(ErrorEvent(
+                created_at=datetime.now(),
+                agent_name=turn_agent_code,
+                message=str(exc) or "agent turn setup failed",
+            )))
+            await self._publish(_tag(DoneEvent(created_at=datetime.now(), agent_name=turn_agent_code)))
+            return None
 
         buffers: dict[str, DeltaBuffer] = {}
         stream_error: ErrorEvent | None = None
@@ -328,6 +329,10 @@ class AgentSession:
             ):
                 track_delta(buffers, event)
                 await self._publish(_tag(event))
+            # Finalize segments left open by providers without a text-done event
+            # (e.g. Chat Completions); otherwise the text is never persisted.
+            for finalize_event in incomplete_segment_events(buffers, agent_name=agent.name):
+                await self._publish(_tag(finalize_event))
             buffers.clear()
         except (InterruptSignal, asyncio.CancelledError):
             # Both paths end the turn mid-flight; emit boundary + done so the
@@ -400,12 +405,19 @@ class AgentSession:
         self._agent_graph = None
         self._main_agent_code = ""
 
-    async def _run_background_turn(
+    async def _drive(
         self,
-        content: list[AgentInputPart],
+        content: list[AgentInputPart] | None,
         agent_code: str,
         context: AgentRuntimeContext,
+        *,
+        attempt: int = 0,
+        recovered: bool = False,
     ) -> None:
+        # The single main-session driver (true-async, non-blocking): run the
+        # optional initial turn, drain ready notifications, then end. On delegation
+        # it ends and goes idle while children run; a child's completion kicks
+        # resume_session. The finally only reconciles a post-drain claim race.
         async with self._turn_lock:
             task = asyncio.current_task()
             self._current_task = task
@@ -417,40 +429,85 @@ class AgentSession:
                         context.session_id, context.user.id, agent_code,
                     )
 
-                is_initial = True
+                is_initial = content is not None
 
                 async def _run_turn(trigger: TurnTrigger) -> Any:
                     nonlocal is_initial
-                    if is_initial and not trigger.has_notification:
+                    if recovered and trigger.notification is not None and trigger.notification.is_user_message:
+                        # Boot recovery: the bubble was never published in this
+                        # process, so surface it as the turn is consumed.
+                        trigger = replace_trigger(trigger, emit_user_event=True)
+                    elif is_initial and not trigger.has_notification:
                         trigger = replace_trigger(trigger, emit_user_event=True)
                     is_initial = False
                     return await self._execute_turn(trigger, agent_code, context)
-
-                async def _has_background() -> bool:
-                    return await _has_active_session_runtime(self.session_id)
 
                 await run_until_idle(
                     session_id=self.session_id,
                     agent_instance_id=context.agent_instance_id,
                     initial_content=content,
                     run_turn=_run_turn,
-                    has_background_work=_has_background,
                 )
             except asyncio.CancelledError:
                 canceled = True
                 raise
             except Exception as exc:
-                logger.exception("agent background turn failed session=%s", self.session_id)
-                await _force_mark_session_stopped(self.session_id, error=str(exc) or "agent turn failed")
+                logger.exception("agent driver failed session=%s", self.session_id)
                 await self._publish(ErrorEvent(created_at=datetime.now(), message=str(exc) or "agent turn failed"))
                 await self._publish(DoneEvent(created_at=datetime.now()))
             finally:
+                relaunched = False
                 if not canceled:
-                    await _mark_session_stopped(self.session_id)
-                if self._current_task is task:
+                    relaunched = await self._reconcile_driver(agent_code, context, attempt)
+                if self._current_task is task and not relaunched:
                     self._current_task = None
-                if not canceled:
+                if not canceled and not relaunched:
+                    await _mark_session_stopped(self.session_id)
                     await self._publish_idle_if_inactive()
+
+    async def _reconcile_driver(
+        self,
+        agent_code: str,
+        context: AgentRuntimeContext,
+        attempt: int,
+    ) -> bool:
+        # Relaunch (under _start_lock) only if a claimable PENDING landed after the
+        # final drain; AWAITING obligations (running children) keep the session
+        # idle, not driving. Returns whether relaunched.
+        async with self._start_lock:
+            if not await agent_notifications.has_pending_notification(
+                session_id=self.session_id,
+                target_agent_instance_id=context.agent_instance_id,
+            ):
+                return False
+            if attempt >= _MAX_DRIVER_RELAUNCH:
+                logger.error(
+                    "agent driver relaunch budget exhausted session=%s target=%s; canceling outstanding work",
+                    self.session_id, context.agent_instance_id,
+                )
+                await agent_notifications.cancel_session_notifications(
+                    self.session_id, "Agent driver could not make progress.",
+                )
+                return False
+            new_task = asyncio.create_task(
+                self._relaunch_driver(
+                    _DRIVER_RELAUNCH_BACKOFF_SECONDS * attempt, agent_code, context, attempt + 1,
+                ),
+                name=f"agent-driver-relaunch-{self.session_id}",
+            )
+            self._current_task = new_task
+            return True
+
+    async def _relaunch_driver(
+        self,
+        delay: float,
+        agent_code: str,
+        context: AgentRuntimeContext,
+        attempt: int,
+    ) -> None:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        await self._drive(None, agent_code, context, attempt=attempt)
 
     def _publish_run_state(self, running: bool) -> None:
         event = RunStateEvent(created_at=datetime.now(), running=running)
@@ -464,23 +521,78 @@ class AgentSession:
             self._live_projection.reset(event)
 
     async def _publish_idle_if_inactive(self) -> None:
-        if self.is_running() or await _has_active_session_runtime(self.session_id):
+        # Live run-state tracks the main agent only (idle-live UX): once it ends
+        # with no claimable PENDING turn, go idle even while sub-agents stream.
+        if self.is_running():
+            return
+        if await agent_notifications.has_pending_main_agent_notification(session_id=self.session_id):
             return
         self._publish_run_state(False)
 
     async def _publish(self, event: AgentEventSchema) -> None:
         self.publish_external(event)
 
+    async def _ensure_timeline_loaded(self) -> None:
+        """Resume the seq counter + key map from the durable log, then start the writer.
+
+        Loading the existing key→seq map lets a re-pooled or recovered session
+        re-emit an already-persisted item (e.g. a running subagent_task) under
+        its original seq so live and stored frames keep one identity space.
+        """
+        if self._timeline_loaded:
+            return
+        from service.agent.event_log import load_timeline_head
+
+        max_seq, item_seq = await load_timeline_head(self.session_id)
+        if self._timeline_loaded:
+            return
+        self._seq = max(self._seq, max_seq)
+        for key, seq in item_seq.items():
+            self._item_seq.setdefault(key, seq)
+        self._timeline_loaded = True
+        self._log_writer.start()
+
+    def _stamp_event(self, event: AgentEventSchema) -> str | None:
+        """Stamp ``event.seq`` in place; return its durable item_key or None.
+
+        Keyless events (user_message/turn_boundary/error) consume a fresh seq
+        per emission; keyed events reuse the first-seen seq for their item_key.
+        Deltas and control frames receive a seq for ordering but are not stored.
+        """
+        if isinstance(event, (RunStateEvent, DoneEvent)):
+            return None
+        key = timeline_item_key(event)
+        if key is None:
+            self._seq += 1
+            event.seq = self._seq
+            persist_key = f"{event.type}:{self._seq}"
+        else:
+            seq = self._item_seq.get(key)
+            if seq is None:
+                self._seq += 1
+                seq = self._seq
+                self._item_seq[key] = seq
+            event.seq = seq
+            persist_key = key
+        if not is_persistable(event):
+            return None
+        return persist_key
+
     def publish_external(self, event: AgentEventSchema) -> None:
         """Inject an event into the session's unified event bus.
 
         Used internally by ``_publish`` and externally via ``AgentSessionPool.publish``.
         Synchronous: projection.apply and put_nowait are non-blocking, and
-        asyncio's single-threaded model guarantees atomicity.
+        asyncio's single-threaded model guarantees atomicity. The seq stamp and
+        the durable log enqueue are also non-blocking; the actual DB upsert runs
+        on the writer task.
         """
+        persist_key = self._stamp_event(event)
         self._live_projection.apply(event)
         for queue in tuple(self._subscribers):
             self._enqueue_or_rebase(queue, event)
+        if persist_key is not None and self._timeline_loaded:
+            self._log_writer.enqueue(persist_key, event.seq, event.model_dump_json(), event.created_at)
 
     def _enqueue_or_rebase(self, queue: asyncio.Queue[AgentEventSchema], event: AgentEventSchema) -> None:
         if queue.qsize() < _SUBSCRIBER_REBASE_THRESHOLD:
@@ -589,28 +701,57 @@ class AgentSessionPool:
         session = await self.get_or_create(session_id)
         return session, await session.subscribe(include)
 
-    def publish(self, session_id: str, event: AgentEventSchema) -> None:
+    def publish(self, session_id: str, event: AgentEventSchema) -> bool:
         """Route an external event to the session's unified event bus.
 
         Lock-free: dict.get and attribute assignment are atomic in asyncio's
-        single-threaded model.  If no pool entry exists (no active subscriber),
-        the event is silently dropped — it lives in the DB via the caller's
-        Z3r0Session persistence.
+        single-threaded model. Returns ``True`` when a pooled session with a
+        loaded timeline received and durably stored the event; ``False`` lets
+        the caller fall back to a direct persist (e.g. boot-time subagent
+        status changes for sessions that are not pooled yet).
         """
         entry = self._pool.get(session_id)
         if entry is None:
-            return
+            return False
         entry.last_used_at = time.monotonic()
         entry.session.publish_external(event)
+        return entry.session.timeline_loaded
 
-    async def notify_idle(self, session_id: str) -> None:
-        """Signal that external work (e.g., sub-agent tasks) may have finished.
+    async def resume_session(self, session_id: str) -> None:
+        # Main-agent arm of resume_target_instance: rebuild the runtime context
+        # from persisted meta and start a non-blocking driver. With no pending
+        # main work (e.g. a canceled task) settle idle instead of starting a turn;
+        # no-op while a driver already runs.
+        from middleware.auth import AuthUser
+        from service.agent import sessions as agent_sessions
+        from service.agent.runtime import build_runtime_context
+        from service.system_user.users import query_system_user_by_id
 
-        Delegates to ``AgentSession._publish_idle_if_inactive`` which checks
-        ``is_running()`` and ``has_active_session_runtime()`` before publishing
-        ``RunStateEvent(running=False)`` and resetting the projection.
-        """
+        if not await agent_notifications.has_pending_main_agent_notification(session_id=session_id):
+            await self._settle_session_idle(session_id)
+            return
+        meta = await agent_sessions.get_session_meta(session_id)
+        if meta is None:
+            return
+        user = await query_system_user_by_id(meta.owner_id)
+        if user is None:
+            return
+        auth_user = AuthUser(id=user.id, role=user.role, email=user.email, username=user.username)
+        agent_code = meta.runtime_agent_code or meta.agent_code
+        context = await build_runtime_context(
+            session_id, auth_user, meta.runtime_sandbox_container_id, agent_code,
+        )
+        session = await self.get_or_create(session_id)
+        await session.start_notification_recovery(context, recovered=False)
+
+    async def _settle_session_idle(self, session_id: str) -> None:
+        # Wind down a session with no pending main turn (e.g. a canceled task):
+        # mark the DB run stopped (no-op while other work is active) and publish
+        # run_state=false for a pooled, non-running session.
         entry = self._pool.get(session_id)
+        if entry is not None and entry.session.is_running():
+            return
+        await _mark_session_stopped(session_id)
         if entry is not None:
             await entry.session._publish_idle_if_inactive()
 
@@ -785,12 +926,6 @@ async def _force_mark_session_stopped(session_id: str, *, error: str = "") -> No
     from service.agent import sessions as agent_sessions
 
     await agent_sessions.force_mark_session_stopped(session_id, error=error)
-
-
-async def _has_active_session_runtime(session_id: str) -> bool:
-    from service.agent import sessions as agent_sessions
-
-    return await agent_sessions.has_active_session_runtime(session_id)
 
 
 async def _mark_sessions_stopped(session_ids: list[str], *, error: str = "") -> None:

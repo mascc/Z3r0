@@ -48,7 +48,7 @@ export function applyEventToTranscript(transcript: AgentTranscript, event: Agent
       return false;
     case "error":
       setAgentName(transcript, event.agent_name);
-      transcript.blocks.push({ kind: "error", id: newId(), message: event.message || "agent run failed" });
+      transcript.blocks.push({ kind: "error", id: `error:${event.seq}:${event.created_at}`, message: event.message || "agent run failed" });
       return true;
   }
 }

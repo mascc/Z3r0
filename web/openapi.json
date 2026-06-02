@@ -1823,6 +1823,11 @@
             "title": "Nested For",
             "type": "string"
           },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
           "type": {
             "const": "done",
             "default": "done",
@@ -1866,6 +1871,11 @@
             "default": "",
             "title": "Nested For",
             "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "type": {
             "const": "error",
@@ -1961,7 +1971,7 @@
             "title": "Items",
             "type": "array"
           },
-          "next_before_id": {
+          "next_before_seq": {
             "anyOf": [
               {
                 "type": "integer"
@@ -1970,7 +1980,7 @@
                 "type": "null"
               }
             ],
-            "title": "Next Before Id"
+            "title": "Next Before Seq"
           },
           "session_id": {
             "title": "Session Id",
@@ -2192,6 +2202,11 @@
           "running": {
             "title": "Running",
             "type": "boolean"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "type": {
             "const": "run_state",
@@ -2588,6 +2603,11 @@
             "title": "Run Id",
             "type": "string"
           },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
           "status": {
             "$ref": "#/components/schemas/AgentSubordinateStatus"
           },
@@ -2715,6 +2735,11 @@
             "title": "Segment Id",
             "type": "string"
           },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -2764,6 +2789,11 @@
             "title": "Segment Id",
             "type": "string"
           },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -2809,6 +2839,11 @@
           "segment_id": {
             "title": "Segment Id",
             "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "text": {
             "title": "Text",
@@ -2858,6 +2893,11 @@
           "segment_id": {
             "title": "Segment Id",
             "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "text": {
             "title": "Text",
@@ -2914,6 +2954,11 @@
             "title": "Nested For",
             "type": "string"
           },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
           "type": {
             "const": "tool_call",
             "default": "tool_call",
@@ -2964,6 +3009,11 @@
             "default": "",
             "title": "Output",
             "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "type": {
             "const": "tool_result",
@@ -3039,6 +3089,11 @@
             "default": "",
             "title": "Nested For",
             "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "type": {
             "const": "turn_boundary",
@@ -3294,6 +3349,11 @@
             "default": "",
             "title": "Display Text",
             "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
           },
           "target_agent_code": {
             "default": "",
@@ -3849,7 +3909,7 @@
           },
           {
             "in": "query",
-            "name": "before_id",
+            "name": "before_seq",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3861,7 +3921,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Before Id"
+              "title": "Before Seq"
             }
           },
           {

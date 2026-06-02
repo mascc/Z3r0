@@ -20,10 +20,10 @@ export function createAgentSession() {
 
 export function listAgentEvents(
   sessionId: string,
-  options: { beforeId?: number | null; limit?: number } = {},
+  options: { beforeSeq?: number | null; limit?: number } = {},
 ) {
   const params = new URLSearchParams();
-  if (options.beforeId) params.set("before_id", String(options.beforeId));
+  if (options.beforeSeq) params.set("before_seq", String(options.beforeSeq));
   if (options.limit) params.set("limit", String(options.limit));
   const query = params.toString();
   return apiGet<ListAgentEventsResponse>(

@@ -12,11 +12,25 @@ class AgentNotificationKind(StrEnum):
 
 
 class AgentNotificationStatus(StrEnum):
+    # Obligation registered for an in-flight background task that will later
+    # produce a result. Counts as outstanding work but is not claimable.
+    AWAITING = "awaiting"
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
+
+
+# Statuses that represent work the session driver must still wait for: an
+# unfinished obligation (AWAITING), a ready-but-unclaimed item (PENDING), or an
+# item currently being handled (PROCESSING). This is the single source of truth
+# for session liveness / idle detection.
+OUTSTANDING_NOTIFICATION_STATUSES = (
+    AgentNotificationStatus.AWAITING,
+    AgentNotificationStatus.PENDING,
+    AgentNotificationStatus.PROCESSING,
+)
 
 
 USER_MESSAGE_PRIORITY = 10

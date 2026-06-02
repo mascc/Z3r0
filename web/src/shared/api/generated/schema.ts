@@ -1533,6 +1533,11 @@ export interface components {
              */
             nested_for: string;
             /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
@@ -1568,6 +1573,11 @@ export interface components {
              */
             nested_for: string;
             /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
@@ -1591,8 +1601,8 @@ export interface components {
             has_more: boolean;
             /** Items */
             items: (components["schemas"]["UserMessageEvent"] | components["schemas"]["TurnBoundaryEvent"] | components["schemas"]["TextDeltaEvent"] | components["schemas"]["TextCompleteEvent"] | components["schemas"]["ThinkingDeltaEvent"] | components["schemas"]["ThinkingCompleteEvent"] | components["schemas"]["ToolCallEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["SubagentTaskEvent"] | components["schemas"]["ErrorEvent"])[];
-            /** Next Before Id */
-            next_before_id?: number | null;
+            /** Next Before Seq */
+            next_before_seq?: number | null;
             /** Session Id */
             session_id: string;
         };
@@ -1673,6 +1683,11 @@ export interface components {
             created_at: string;
             /** Running */
             running: boolean;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1879,6 +1894,11 @@ export interface components {
             result: string;
             /** Run Id */
             run_id: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             status: components["schemas"]["AgentSubordinateStatus"];
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -1947,6 +1967,11 @@ export interface components {
             nested_for: string;
             /** Segment Id */
             segment_id: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /** Text */
             text: string;
             /**
@@ -1981,6 +2006,11 @@ export interface components {
             nested_for: string;
             /** Segment Id */
             segment_id: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /** Text */
             text: string;
             /**
@@ -2013,6 +2043,11 @@ export interface components {
             nested_for: string;
             /** Segment Id */
             segment_id: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /** Text */
             text: string;
             /**
@@ -2047,6 +2082,11 @@ export interface components {
             nested_for: string;
             /** Segment Id */
             segment_id: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /** Text */
             text: string;
             /**
@@ -2085,6 +2125,11 @@ export interface components {
              * @default
              */
             nested_for: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2125,6 +2170,11 @@ export interface components {
              * @default
              */
             output: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2173,6 +2223,11 @@ export interface components {
              * @default
              */
             nested_for: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2261,6 +2316,11 @@ export interface components {
              * @default
              */
             display_text: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
             /**
              * Target Agent Code
              * @default
@@ -2594,7 +2654,7 @@ export interface operations {
     list_agent_events_route_api_agent_sessions__session_id__events_get: {
         parameters: {
             query?: {
-                before_id?: number | null;
+                before_seq?: number | null;
                 limit?: number;
             };
             header?: never;

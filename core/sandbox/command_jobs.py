@@ -7,11 +7,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from core.runtime.context import AgentRuntimeContext
-from core.runtime.notification_dispatch import signal_target_notifications
 from core.sandbox.command_output import COMMAND_TIMEOUT_ERROR
 from logger import get_logger
 from schema.sandbox.async_jobs import SandboxAsyncJobSnapshot
-from service.agent import notifications as agent_notifications
 from service.sandbox import async_jobs as sandbox_async_jobs
 from service.sandbox.commands import SandboxContainerCommandTimeoutError, execute_sandbox_container_command
 
@@ -262,14 +260,17 @@ async def _create_job_record(
 
 
 async def _queue_completion_notification(snapshot: SandboxAsyncJobSnapshot | None) -> None:
+    # The terminal write already flipped the obligation atomically (PENDING for
+    # completed/failed, silent for canceled); kick the owner so it integrates a
+    # result or re-evaluates when dormant. The kick is a no-op when nothing pends.
     if snapshot is None:
         return
     try:
-        notification = await agent_notifications.enqueue_sandbox_async_job_finished_notification(snapshot)
-        if notification is not None:
-            await signal_target_notifications(snapshot.agent_instance_id)
+        from core.delegation.subagents import resume_target_instance
+
+        await resume_target_instance(snapshot.session_id, snapshot.agent_instance_id)
     except Exception:
-        logger.exception("failed to queue sandbox async job notification: %s", snapshot.run_id)
+        logger.exception("failed to resume owner after async job completion: %s", snapshot.run_id)
 
 
 async def _queue_completion_notifications(snapshots: list[SandboxAsyncJobSnapshot]) -> None:

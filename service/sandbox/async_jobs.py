@@ -6,7 +6,9 @@ from sqlmodel import select, update
 from database import get_async_session
 from logger import get_logger
 from model.sandbox.async_jobs import SandboxAsyncJob
+from schema.agent.notifications import AgentNotificationKind
 from schema.sandbox.async_jobs import SandboxAsyncJobSnapshot, SandboxAsyncJobStatus
+from service.agent import notifications as agent_notifications
 
 
 logger = get_logger(__name__)
@@ -15,6 +17,12 @@ TERMINAL_ASYNC_JOB_STATUSES = {
     SandboxAsyncJobStatus.COMPLETED,
     SandboxAsyncJobStatus.FAILED,
     SandboxAsyncJobStatus.CANCELED,
+}
+
+# Statuses whose result the owning agent must integrate (wakes its driver).
+_OWNER_WAKING_STATUSES = {
+    SandboxAsyncJobStatus.COMPLETED,
+    SandboxAsyncJobStatus.FAILED,
 }
 
 
@@ -52,6 +60,21 @@ async def create_async_job(
     )
     async with get_async_session() as session:
         session.add(job)
+        # Register the owner wake-up obligation in the same transaction (single
+        # source of truth for liveness; no window between job and notification).
+        agent_notifications.add_obligation_in_session(
+            session,
+            kind=AgentNotificationKind.SANDBOX_ASYNC_JOB_FINISHED,
+            session_id=session_id,
+            target_agent_code=agent_code,
+            target_agent_instance_id=agent_instance_id,
+            run_id=run_id,
+            nested_for_agent_code=nested_for_agent_code,
+            nested_call_id=nested_call_id,
+            sandbox_container_id=sandbox_container_id,
+            sandbox_container_generation=sandbox_container_generation,
+            sandbox_skill_metadata=sandbox_skill_metadata,
+        )
         await session.commit()
         await session.refresh(job)
     logger.debug("sandbox async job created: %s", job.run_id)
@@ -64,19 +87,6 @@ async def get_async_job(run_id: str, *, session_id: str) -> SandboxAsyncJobSnaps
         if job is None or job.session_id != session_id:
             return None
         return snapshot_from_job(job)
-
-
-async def has_running_async_jobs(*, session_id: str) -> bool:
-    async with get_async_session() as session:
-        run_id = (await session.exec(
-            select(SandboxAsyncJob.run_id)
-            .where(
-                SandboxAsyncJob.session_id == session_id,
-                SandboxAsyncJob.status == SandboxAsyncJobStatus.RUNNING.value,
-            )
-            .limit(1)
-        )).first()
-        return run_id is not None
 
 
 async def count_running_async_jobs_for_agent(*, session_id: str, agent_instance_id: str) -> int:
@@ -189,12 +199,21 @@ async def mark_stale_running_async_jobs_failed() -> list[SandboxAsyncJobSnapshot
         rows = (await session.exec(
             select(SandboxAsyncJob).where(SandboxAsyncJob.status == SandboxAsyncJobStatus.RUNNING.value)
         )).all()
+        restart_error = "Sandbox async job was interrupted by backend restart."
         for job in rows:
             job.status = SandboxAsyncJobStatus.FAILED.value
-            job.error = "Sandbox async job was interrupted by backend restart."
+            job.error = restart_error
             job.updated_at = now
             job.finished_at = now
             session.add(job)
+            await agent_notifications.resolve_obligation_in_session(
+                session,
+                kind=AgentNotificationKind.SANDBOX_ASYNC_JOB_FINISHED,
+                run_id=job.run_id,
+                ready=True,
+                payload=_async_job_obligation_payload(job),
+                error=restart_error,
+            )
         if rows:
             await session.commit()
             for job in rows:
@@ -265,9 +284,30 @@ async def _finish_async_job(
             await session.rollback()
             current = await session.get(SandboxAsyncJob, run_id)
             return snapshot_from_job(current) if current is not None else None
+        # Flip the owner obligation atomically with the job-terminal write.
+        refreshed = await session.get(SandboxAsyncJob, run_id)
+        await agent_notifications.resolve_obligation_in_session(
+            session,
+            kind=AgentNotificationKind.SANDBOX_ASYNC_JOB_FINISHED,
+            run_id=run_id,
+            ready=status in _OWNER_WAKING_STATUSES,
+            payload=_async_job_obligation_payload(refreshed) if refreshed is not None else None,
+            error=error,
+        )
         await session.commit()
         current = await session.get(SandboxAsyncJob, run_id)
         return snapshot_from_job(current) if current is not None else None
+
+
+def _async_job_obligation_payload(job: SandboxAsyncJob) -> dict[str, object]:
+    return {
+        "status": _coerce_status(job.status).value,
+        "output_file": job.output_file,
+        "output_bytes": job.output_bytes,
+        "output_lines": job.output_lines,
+        "exit_code": job.exit_code,
+        "error": job.error,
+    }
 
 
 async def _cancel_running_async_jobs(
@@ -293,6 +333,13 @@ async def _cancel_running_async_jobs(
             job.updated_at = now
             job.finished_at = now
             session.add(job)
+            await agent_notifications.resolve_obligation_in_session(
+                session,
+                kind=AgentNotificationKind.SANDBOX_ASYNC_JOB_FINISHED,
+                run_id=job.run_id,
+                ready=False,
+                error=error,
+            )
         if not rows:
             return []
         await session.commit()

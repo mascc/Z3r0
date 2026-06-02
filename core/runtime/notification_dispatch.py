@@ -1,9 +1,10 @@
-"""In-memory signal primitives for durable agent notification wakeup.
+"""In-memory signal primitives for low-latency agent turn preemption.
 
-Higher-level dispatch (notification consumption, idle waiting) is handled by
-``core.task_runtime.executor.run_until_idle``.  This module provides only the
-low-level signal/wait/version mechanism used by ``iter_interruptible_events``
-and ``run_until_idle``.
+Notification consumption is handled by ``core.task_runtime.executor`` and
+driver resumption by ``resume_target_instance``. This module provides only the
+signal/wait/version mechanism that lets ``iter_interruptible_events`` preempt an
+in-flight turn promptly when a higher-priority notification (e.g. a new user
+message) becomes pending, instead of waiting for its poll interval.
 """
 
 from __future__ import annotations
