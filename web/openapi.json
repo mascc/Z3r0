@@ -2493,6 +2493,7 @@
             "type": "string"
           },
           "image_size": {
+            "format": "int64",
             "title": "Image Size",
             "type": "integer"
           },

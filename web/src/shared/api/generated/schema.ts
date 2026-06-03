@@ -1819,7 +1819,10 @@ export interface components {
             image_hash: string;
             /** Image Name */
             image_name: string;
-            /** Image Size */
+            /**
+             * Image Size
+             * Format: int64
+             */
             image_size: number;
             status: components["schemas"]["SandboxImageStatus"];
             /**

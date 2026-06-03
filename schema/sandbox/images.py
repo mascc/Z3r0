@@ -21,7 +21,7 @@ class SandboxImageSchema(BaseModel):
 
     id: int
     image_name: str
-    image_size: int
+    image_size: int = Field(json_schema_extra={"format": "int64"})
     image_hash: str
     status: SandboxImageStatus
     created_at: datetime
