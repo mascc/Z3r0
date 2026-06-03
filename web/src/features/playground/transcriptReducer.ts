@@ -121,6 +121,8 @@ function upsertSubagentTask(blocks: TranscriptBlock[], nextItem: SubagentExecuti
 }
 
 export function subagentExecutionItemFromEvent(event: SubagentTaskEvent): SubagentExecutionItem {
+  const legacyResult = legacySubagentText(event, "result");
+  const legacyError = legacySubagentText(event, "error");
   return {
     kind: "subagent",
     id: event.run_id,
@@ -131,10 +133,18 @@ export function subagentExecutionItemFromEvent(event: SubagentTaskEvent): Subage
     agentCode: event.agent_code,
     nestedCallId: event.nested_call_id,
     status: event.status,
-    result: event.result,
-    error: event.error,
+    resultPreview: event.result_preview || legacyResult,
+    errorPreview: event.error_preview || legacyError,
+    resultChars: event.result_chars || legacyResult.length,
+    errorChars: event.error_chars || legacyError.length,
+    truncated: event.truncated,
     progress: event.progress,
   };
+}
+
+function legacySubagentText(event: SubagentTaskEvent, key: "result" | "error"): string {
+  const value = (event as unknown as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
 }
 
 function newId() {

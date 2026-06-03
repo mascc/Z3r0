@@ -123,12 +123,17 @@ function SubagentRunView({ run }: { run: SubagentTarget["runs"][number] }) {
 
 function SubagentFallbackResult({ task }: { task: SubagentExecutionItem }) {
   const failed = task.status === "failed" || task.status === "canceled";
-  const label = task.status === "running" ? "Progress" : failed ? "Error" : "Result";
+  const label = task.status === "running" ? "Progress" : failed ? "Error Preview" : "Result Preview";
   const body = task.status === "running"
     ? task.progress || "Running"
-    : task.result || task.error || "(empty)";
+    : previewBody(task);
 
   return <ExecutionSection label={label} body={body} tone={failed ? "error" : undefined} />;
+}
+
+function previewBody(task: SubagentExecutionItem): string {
+  const body = task.resultPreview || task.errorPreview || "(empty)";
+  return task.truncated ? `${body}\n\n[Preview truncated]` : body;
 }
 
 function SubagentTaskMeta({ item }: { item: SubagentExecutionItem }) {

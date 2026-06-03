@@ -38,8 +38,11 @@ export function transcriptHasEvent(transcript: AgentTranscript, event: AgentCont
         && block.runId === event.run_id
         && block.status === event.status
         && block.progress === event.progress
-        && block.result === event.result
-        && block.error === event.error
+        && block.resultPreview === event.result_preview
+        && block.errorPreview === event.error_preview
+        && block.resultChars === event.result_chars
+        && block.errorChars === event.error_chars
+        && block.truncated === event.truncated
       ));
     default:
       return false;

@@ -47,8 +47,11 @@ export type SubagentExecutionItem = {
   agentCode: SubagentTaskEvent["agent_code"];
   nestedCallId: SubagentTaskEvent["nested_call_id"];
   status: SubagentTaskEvent["status"];
-  result: SubagentTaskEvent["result"];
-  error: SubagentTaskEvent["error"];
+  resultPreview: SubagentTaskEvent["result_preview"];
+  errorPreview: SubagentTaskEvent["error_preview"];
+  resultChars: SubagentTaskEvent["result_chars"];
+  errorChars: SubagentTaskEvent["error_chars"];
+  truncated: SubagentTaskEvent["truncated"];
   progress: SubagentTaskEvent["progress"];
 };
 

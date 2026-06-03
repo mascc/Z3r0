@@ -7,7 +7,11 @@ from database import get_async_session
 from logger import get_logger
 from model.agent.subordinates import AgentSubordinateTask
 from schema.agent.notifications import AgentNotificationKind
-from schema.agent.subordinates import AgentSubordinateStatus, AgentSubordinateTaskSnapshot
+from schema.agent.subordinates import (
+    SUBAGENT_RESUMPTION_PREVIEW_CHARS,
+    AgentSubordinateStatus,
+    AgentSubordinateTaskSnapshot,
+)
 from schema.system_user.users import SystemUserRole
 from service.agent import notifications as agent_notifications
 
@@ -299,9 +303,16 @@ def _subagent_obligation_payload(task: AgentSubordinateTask) -> dict[str, object
         "agent_code": task.agent_code,
         "agent_name": task.agent_name,
         "status": _coerce_subagent_status(task.status).value,
-        "result": task.result,
-        "error": task.error,
+        "result_preview": _preview_text(task.result, SUBAGENT_RESUMPTION_PREVIEW_CHARS),
+        "error_preview": _preview_text(task.error, SUBAGENT_RESUMPTION_PREVIEW_CHARS),
     }
+
+
+def _preview_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    marker = "\n\n[Preview truncated; inspect the referenced result source for more.]"
+    return value[:max(1, limit - len(marker))].rstrip() + marker
 
 
 def snapshot_from_task(task: AgentSubordinateTask) -> AgentSubordinateTaskSnapshot:

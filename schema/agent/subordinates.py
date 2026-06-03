@@ -4,6 +4,10 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 
+SUBAGENT_RESUMPTION_PREVIEW_CHARS = 1000
+SUBAGENT_TASK_RESULT_PREVIEW_CHARS = 3000
+
+
 class AgentSubordinateStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
@@ -35,8 +39,11 @@ class AgentSubordinateTaskToolItem(BaseModel):
     agent_code: str
     agent_name: str = ""
     status: AgentSubordinateStatus
-    result: str = ""
-    error: str = ""
+    result_preview: str = ""
+    error_preview: str = ""
+    result_chars: int = 0
+    error_chars: int = 0
+    truncated: bool = False
     progress: str = ""
 
 

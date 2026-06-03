@@ -48,11 +48,12 @@ class AgentImageMediaTypeSchema(StrEnum):
 
 _MAX_IMAGE_BASE64_LENGTH = 5 * 1024 * 1024
 _MAX_MESSAGE_BASE64_LENGTH = 8 * 1024 * 1024
+MAX_AGENT_TEXT_INPUT_CHARS = 20000
 
 
 class AgentTextInputPart(BaseModel):
     type: Literal[AgentInputPartTypeSchema.TEXT] = AgentInputPartTypeSchema.TEXT
-    text: str = Field(min_length=1, max_length=20000)
+    text: str = Field(min_length=1, max_length=MAX_AGENT_TEXT_INPUT_CHARS)
 
     @field_validator("text", mode="before")
     @classmethod
@@ -169,8 +170,11 @@ class SubagentTaskEvent(_AgentScopedEvent):
     parent_agent_instance_id: str = ""
     agent_code: str
     status: AgentSubordinateStatus
-    result: str = ""
-    error: str = ""
+    result_preview: str = ""
+    error_preview: str = ""
+    result_chars: int = 0
+    error_chars: int = 0
+    truncated: bool = False
     progress: str = ""
 
 

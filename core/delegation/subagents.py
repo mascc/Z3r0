@@ -40,6 +40,7 @@ from schema.agent.events import (
     ToolResultEvent,
 )
 from schema.agent.subordinates import (
+    SUBAGENT_TASK_RESULT_PREVIEW_CHARS,
     AgentSubordinateTaskSnapshot,
     AgentSubordinateTaskToolItem,
     AgentSubordinateTaskToolResult,
@@ -89,8 +90,6 @@ class _SubagentDriver:
 _drivers: dict[str, _SubagentDriver] = {}
 _session_starters: dict[str, set[asyncio.Task[AgentSubordinateTaskSnapshot]]] = defaultdict(set)
 _drivers_lock = asyncio.Lock()
-
-_SUBAGENT_RESULT_MAX_CHARS = 20000
 
 _CANCEL_MESSAGE = "Subagent task canceled."
 # Safety bound on consecutive self-relaunches after an idle drain still sees a
@@ -166,7 +165,7 @@ def build_subagent_tools(
             run_id: str subagent run id returned by start_subagent_task or list_subagent_tasks.
 
         Returns:
-            JSON status with the task status, progress, result, error, and timestamps when available.
+            JSON status with the task status, progress, result preview, error preview, and size metadata.
         """
         snapshot = await _resolve_task(ctx, run_id)
         if snapshot is None:
@@ -222,7 +221,8 @@ def build_subagent_tools(
             name_override="read_subagent_task",
             description_override=(
                 "Read the latest state for a subagent task. Args: run_id is the persistent subagent run id. "
-                "Returns status, progress, result, error, and timestamps when available."
+                "Returns status, progress, preview fields, and result/error sizes. "
+                "Use transcript for execution history."
             ),
         ),
         function_tool(
@@ -260,8 +260,8 @@ def _tool_response(
     message: str = "",
 ) -> str:
     return AgentSubordinateTaskToolResult(
-        task=_task_tool_item(task),
-        tasks=[_task_tool_item(item) for item in tasks or []],
+        task=_task_tool_item(task, include_preview=True),
+        tasks=[_task_tool_item(item, include_preview=False) for item in tasks or []],
         message=message,
     ).model_dump_json(
         exclude_none=True,
@@ -269,18 +269,39 @@ def _tool_response(
     )
 
 
-def _task_tool_item(snapshot: AgentSubordinateTaskSnapshot | None) -> AgentSubordinateTaskToolItem | None:
+def _task_tool_item(
+    snapshot: AgentSubordinateTaskSnapshot | None,
+    *,
+    include_preview: bool,
+) -> AgentSubordinateTaskToolItem | None:
     if snapshot is None:
         return None
+    result_preview, result_truncated = (
+        _tool_preview(snapshot.result) if include_preview else ("", bool(snapshot.result))
+    )
+    error_preview, error_truncated = (
+        _tool_preview(snapshot.error) if include_preview else ("", bool(snapshot.error))
+    )
     return AgentSubordinateTaskToolItem(
         run_id=snapshot.run_id,
         agent_code=snapshot.agent_code,
         agent_name=snapshot.agent_name,
         status=snapshot.status,
-        result=snapshot.result,
-        error=snapshot.error,
+        result_preview=result_preview,
+        error_preview=error_preview,
+        result_chars=len(snapshot.result),
+        error_chars=len(snapshot.error),
+        truncated=result_truncated or error_truncated,
         progress=snapshot.progress,
     )
+
+
+def _tool_preview(value: str) -> tuple[str, bool]:
+    if len(value) <= SUBAGENT_TASK_RESULT_PREVIEW_CHARS:
+        return value, False
+    marker = "\n\n[Preview truncated; inspect transcript for execution history.]"
+    body_limit = max(1, SUBAGENT_TASK_RESULT_PREVIEW_CHARS - len(marker))
+    return value[:body_limit].rstrip() + marker, True
 
 
 def _log_subagent_start_result(task: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
@@ -732,6 +753,8 @@ def _progress_from_event(event: AgentEventSchema) -> str:
 
 
 def _task_event(snapshot: AgentSubordinateTaskSnapshot) -> AgentEventSchema:
+    result_preview, result_truncated = _tool_preview(snapshot.result)
+    error_preview, error_truncated = _tool_preview(snapshot.error)
     return SubagentTaskEvent(
         created_at=snapshot.updated_at,
         agent_name=snapshot.agent_name,
@@ -742,8 +765,11 @@ def _task_event(snapshot: AgentSubordinateTaskSnapshot) -> AgentEventSchema:
         parent_agent_instance_id=snapshot.parent_agent_instance_id,
         agent_code=snapshot.agent_code,
         status=snapshot.status,
-        result=snapshot.result,
-        error=snapshot.error,
+        result_preview=result_preview,
+        error_preview=error_preview,
+        result_chars=len(snapshot.result),
+        error_chars=len(snapshot.error),
+        truncated=result_truncated or error_truncated,
         progress=snapshot.progress,
     )
 
@@ -809,19 +835,10 @@ async def _subagent_assistant_output(snapshot: AgentSubordinateTaskSnapshot) -> 
         text = _assistant_message_text(stored.item)
         if text:
             sections.append(text)
-    return _truncate_subagent_result("\n\n".join(sections).strip())
+    return "\n\n".join(sections).strip()
 
 
 def _assistant_message_text(item: dict[str, Any]) -> str:
     if item.get("type") == "message" and item.get("role") == "assistant":
         return extract_message_text(item.get("content")).strip()
     return ""
-
-
-def _truncate_subagent_result(text: str) -> str:
-    if len(text) <= _SUBAGENT_RESULT_MAX_CHARS:
-        return text
-    return (
-        text[:_SUBAGENT_RESULT_MAX_CHARS].rstrip()
-        + "\n\n[Subagent result truncated; view the session transcript for the full output.]"
-    )

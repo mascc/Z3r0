@@ -529,9 +529,14 @@
             "title": "Agent Name",
             "type": "string"
           },
-          "error": {
+          "error_chars": {
+            "default": 0,
+            "title": "Error Chars",
+            "type": "integer"
+          },
+          "error_preview": {
             "default": "",
-            "title": "Error",
+            "title": "Error Preview",
             "type": "string"
           },
           "progress": {
@@ -539,9 +544,14 @@
             "title": "Progress",
             "type": "string"
           },
-          "result": {
+          "result_chars": {
+            "default": 0,
+            "title": "Result Chars",
+            "type": "integer"
+          },
+          "result_preview": {
             "default": "",
-            "title": "Result",
+            "title": "Result Preview",
             "type": "string"
           },
           "run_id": {
@@ -550,6 +560,11 @@
           },
           "status": {
             "$ref": "#/components/schemas/AgentSubordinateStatus"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2552,9 +2567,14 @@
             "title": "Created At",
             "type": "string"
           },
-          "error": {
+          "error_chars": {
+            "default": 0,
+            "title": "Error Chars",
+            "type": "integer"
+          },
+          "error_preview": {
             "default": "",
-            "title": "Error",
+            "title": "Error Preview",
             "type": "string"
           },
           "nested_call_id": {
@@ -2582,9 +2602,14 @@
             "title": "Progress",
             "type": "string"
           },
-          "result": {
+          "result_chars": {
+            "default": 0,
+            "title": "Result Chars",
+            "type": "integer"
+          },
+          "result_preview": {
             "default": "",
-            "title": "Result",
+            "title": "Result Preview",
             "type": "string"
           },
           "run_id": {
@@ -2598,6 +2623,11 @@
           },
           "status": {
             "$ref": "#/components/schemas/AgentSubordinateStatus"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           },
           "type": {
             "const": "subagent_task",

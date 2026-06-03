@@ -890,23 +890,38 @@ export interface components {
              */
             agent_name: string;
             /**
-             * Error
+             * Error Chars
+             * @default 0
+             */
+            error_chars: number;
+            /**
+             * Error Preview
              * @default
              */
-            error: string;
+            error_preview: string;
             /**
              * Progress
              * @default
              */
             progress: string;
             /**
-             * Result
+             * Result Chars
+             * @default 0
+             */
+            result_chars: number;
+            /**
+             * Result Preview
              * @default
              */
-            result: string;
+            result_preview: string;
             /** Run Id */
             run_id: string;
             status: components["schemas"]["AgentSubordinateStatus"];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** AgentSubordinateTaskToolResult */
         AgentSubordinateTaskToolResult: {
@@ -1856,10 +1871,15 @@ export interface components {
              */
             created_at: string;
             /**
-             * Error
+             * Error Chars
+             * @default 0
+             */
+            error_chars: number;
+            /**
+             * Error Preview
              * @default
              */
-            error: string;
+            error_preview: string;
             /**
              * Nested Call Id
              * @default
@@ -1886,10 +1906,15 @@ export interface components {
              */
             progress: string;
             /**
-             * Result
+             * Result Chars
+             * @default 0
+             */
+            result_chars: number;
+            /**
+             * Result Preview
              * @default
              */
-            result: string;
+            result_preview: string;
             /** Run Id */
             run_id: string;
             /**
@@ -1898,6 +1923,11 @@ export interface components {
              */
             seq: number;
             status: components["schemas"]["AgentSubordinateStatus"];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
