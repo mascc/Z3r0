@@ -12,6 +12,7 @@ const VENDOR_CHUNKS: Record<string, RegExp> = {
 };
 
 export default defineConfig({
+  root: "app",
   plugins: [react()],
   server: {
     port: 5173,
@@ -23,7 +24,8 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist-app",
+    outDir: "../dist-app",
+    emptyOutDir: true,
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {

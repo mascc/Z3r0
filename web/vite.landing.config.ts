@@ -3,7 +3,7 @@ import { defineConfig, type Plugin } from "vite";
 import { renderLandingHtml } from "./src/landing-prerender";
 import { landingSeo, getRobotsTxt, getSitemapXml, getWebManifest, structuredData } from "./landing.seo";
 
-const logoSourcePath = "/src/assets/z3r0-logo.png";
+const logoEntryPath = "../src/assets/z3r0-logo.png";
 const logoOutputPath = "assets/z3r0-logo.png";
 const siteImageUrl = new URL(logoOutputPath, landingSeo.siteUrl).toString();
 
@@ -54,7 +54,7 @@ function landingSeoPlugin(): Plugin {
         .replace(/\s*<meta\s+name="description"[\s\S]*?\/>\s*/i, "\n")
         .replace(/\s*<title>[\s\S]*?<\/title>\s*/i, "\n")
         .replace("</head>", `    ${buildMetaTags()}\n  </head>`)
-        .replace('<link rel="icon" type="image/png" href="/src/assets/z3r0-logo.png" />', `<link rel="icon" type="image/png" href="${logoSourcePath}" />`)
+        .replace('<link rel="icon" type="image/png" href="../src/assets/z3r0-logo.png" />', `<link rel="icon" type="image/png" href="${logoEntryPath}" />`)
         .replace('<div id="root"></div>', `<div id="root">${renderLandingHtml(`./${logoOutputPath}`)}</div>`);
     },
     generateBundle() {
@@ -77,27 +77,14 @@ function landingSeoPlugin(): Plugin {
   };
 }
 
-function landingIndexHtml(): Plugin {
-  return {
-    name: "z3r0-landing-index-html",
-    enforce: "post",
-    generateBundle(_, bundle) {
-      const html = bundle["landing.html"];
-      if (!html || html.type !== "asset") return;
-      html.fileName = "index.html";
-      delete bundle["landing.html"];
-    },
-  };
-}
-
 export default defineConfig({
   base: "./",
-  plugins: [react(), landingSeoPlugin(), landingIndexHtml()],
+  root: "landing",
+  plugins: [react(), landingSeoPlugin()],
   build: {
-    outDir: "dist-landing",
+    outDir: "../dist-landing",
     emptyOutDir: true,
     rollupOptions: {
-      input: "landing.html",
       output: {
         assetFileNames(assetInfo) {
           if (assetInfo.name === "z3r0-logo.png") return logoOutputPath;
