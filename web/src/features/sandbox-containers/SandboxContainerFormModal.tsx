@@ -6,6 +6,7 @@ import { showApiError } from "../../shared/api/feedback";
 import type { CreateSandboxContainerRequest, SandboxImage } from "../../shared/api/types";
 import { SANDBOX_CONTAINER_DEFAULT_COMMAND } from "../../shared/api/generated/constants";
 import { ResourceModal } from "../../shared/components/ResourceModal";
+import { createClientId } from "../../shared/lib/id";
 import {
   createEmptyPortMapping,
   PortMappingEditor,
@@ -59,7 +60,7 @@ export function SandboxContainerFormModal({
       const response = await generateDefaultSandboxContainerPortMappings({ image_id: nextImageId });
       if (portMappingRequestId.current !== requestId) return;
       setPortMappings((response.data?.port_mappings ?? []).map((mapping) => ({
-        id: crypto.randomUUID(),
+        id: createClientId("port-mapping"),
         ...mapping,
       })));
     } catch (error) {

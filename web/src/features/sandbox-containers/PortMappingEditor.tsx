@@ -1,6 +1,7 @@
 import { Button, InputNumber, Select, Spin } from "@douyinfe/semi-ui";
 import { Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { SandboxContainerPortMapping } from "../../shared/api/types";
+import { createClientId } from "../../shared/lib/id";
 
 
 export type PortMappingFormValue = SandboxContainerPortMapping & {
@@ -24,7 +25,7 @@ const PROTOCOL_OPTIONS = [
 
 export function createEmptyPortMapping(): PortMappingFormValue {
   return {
-    id: crypto.randomUUID(),
+    id: createClientId("port-mapping"),
     container_port: 8080,
     host_port: 8080,
     protocol: "tcp",

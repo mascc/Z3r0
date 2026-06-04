@@ -10,11 +10,10 @@ from service.system_config.config import (
 
 
 async def get_instance_config_handler() -> CommonResponse:
-    config = await get_instance_config()
-    return CommonResponse(data=config)
+    result = await get_instance_config()
+    return CommonResponse(data=result.config)
 
 
 async def update_instance_config_handler(request: UpdateInstanceConfigRequest) -> CommonResponse:
-    config = await update_instance_config(request)
-    return CommonResponse(data=UpdateInstanceConfigResponse(config=config, restarted=True))
-
+    result = await update_instance_config(request)
+    return CommonResponse(data=UpdateInstanceConfigResponse(config=result.config, restarted=result.restarted))

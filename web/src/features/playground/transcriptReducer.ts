@@ -1,4 +1,5 @@
 import type { AgentContentEvent, SubagentTaskEvent } from "../../shared/api/types";
+import { createClientId } from "../../shared/lib/id";
 import {
   findCompletedTextIndex,
   findStreamingBlockIndex,
@@ -96,7 +97,7 @@ function upsertToolCall(blocks: TranscriptBlock[], callId: string, name: string,
   if (!name) return;
   const index = findToolBlockIndex(blocks, callId, name, argumentsValue);
   if (index === -1) {
-    blocks.push({ kind: "tool", id: callId || newId(), callId, name, arguments: argumentsValue, output: "", isError: false, resolved: false });
+    blocks.push({ kind: "tool", id: callId || createClientId("transcript"), callId, name, arguments: argumentsValue, output: "", isError: false, resolved: false });
     return;
   }
   const existing = blocks[index] as ToolExecutionItem;
@@ -145,11 +146,4 @@ export function subagentExecutionItemFromEvent(event: SubagentTaskEvent): Subage
 function legacySubagentText(event: SubagentTaskEvent, key: "result" | "error"): string {
   const value = (event as unknown as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
-}
-
-function newId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }

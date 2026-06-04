@@ -13,9 +13,7 @@ import type {
 } from "../../shared/api/types";
 import { useAdminResourceHeader } from "../../shared/hooks/useAdminResourceHeader";
 
-type AgentFormValue = AgentConfig & {
-  rowId: string;
-};
+type AgentFormValue = AgentConfig;
 
 type ConfigFormValue = {
   agents: AgentFormValue[];
@@ -92,7 +90,6 @@ function toFormValue(config: InstanceConfig): ConfigFormValue {
     ...agent,
     code: agent.code || code,
     use_responses: agent.use_responses ?? false,
-    rowId: crypto.randomUUID(),
   }));
   return {
     agents,
@@ -111,7 +108,7 @@ function cloneFormValue(values: ConfigFormValue): ConfigFormValue {
 
 function toPayload(values: ConfigFormValue): UpdateInstanceConfigRequest {
   const agents: NonNullable<UpdateInstanceConfigRequest["agents"]> = {};
-  values.agents.forEach(({ rowId: _, ...agent }) => {
+  values.agents.forEach((agent) => {
     const code = agent.code.trim();
     if (!code) return;
     agents[code] = {
@@ -175,10 +172,10 @@ export function SystemConfigPage() {
     setValues((current) => current && { ...current, agent_runtime: { ...current.agent_runtime, ...patch } });
   };
 
-  const updateAgent = (rowId: string, patch: Partial<AgentConfig>) => {
+  const updateAgent = (code: string, patch: Partial<AgentConfig>) => {
     setValues((current) => current && {
       ...current,
-      agents: current.agents.map((agent) => (agent.rowId === rowId ? { ...agent, ...patch } : agent)),
+      agents: current.agents.map((agent) => (agent.code === code ? { ...agent, ...patch } : agent)),
     });
   };
 
@@ -243,9 +240,9 @@ export function SystemConfigPage() {
               <div className="agent-config-list">
                 {values.agents.map((agent) => (
                   <AgentConfigEditor
-                    key={agent.rowId}
+                    key={agent.code}
                     agent={agent}
-                    onChange={(patch) => updateAgent(agent.rowId, patch)}
+                    onChange={(patch) => updateAgent(agent.code, patch)}
                   />
                 ))}
               </div>
