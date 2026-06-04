@@ -1,6 +1,6 @@
 import { Button, Spin } from "@douyinfe/semi-ui";
 import { ArrowDown } from "lucide-react";
-import { ReactNode, RefObject, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { ReactNode, RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAutoFollowScroll } from "./useAutoFollowScroll";
 
 type MessageScrollPanelProps = {
@@ -17,6 +17,8 @@ type MessageScrollPanelProps = {
   scrollButtonClassName?: string;
   watch?: readonly unknown[];
 };
+
+const SCROLLBAR_VISIBLE_MS = 900;
 
 export function MessageScrollPanel({
   ariaLabel,
@@ -35,10 +37,43 @@ export function MessageScrollPanel({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previousHeightRef = useRef(0);
   const loadPreviousThrottleRef = useRef(false);
+  const scrollbarTimerRef = useRef<number | null>(null);
+  const scrollbarVisibleRef = useRef(false);
+  const [scrollbarVisible, setScrollbarVisible] = useState(false);
+
+  const showScrollbar = useCallback(() => {
+    if (!enabled) return;
+    if (!scrollbarVisibleRef.current) {
+      scrollbarVisibleRef.current = true;
+      setScrollbarVisible(true);
+    }
+    if (scrollbarTimerRef.current !== null) window.clearTimeout(scrollbarTimerRef.current);
+    scrollbarTimerRef.current = window.setTimeout(() => {
+      scrollbarTimerRef.current = null;
+      scrollbarVisibleRef.current = false;
+      setScrollbarVisible(false);
+    }, SCROLLBAR_VISIBLE_MS);
+  }, [enabled]);
 
   useEffect(() => {
     if (!loadingPrevious) loadPreviousThrottleRef.current = false;
   }, [loadingPrevious]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollbarTimerRef.current !== null) window.clearTimeout(scrollbarTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (enabled) return;
+    if (scrollbarTimerRef.current !== null) {
+      window.clearTimeout(scrollbarTimerRef.current);
+      scrollbarTimerRef.current = null;
+    }
+    scrollbarVisibleRef.current = false;
+    setScrollbarVisible(false);
+  }, [enabled]);
 
   const onScrollToTop = useCallback(() => {
     const container = containerRef.current;
@@ -56,6 +91,7 @@ export function MessageScrollPanel({
   } = useAutoFollowScroll({
     enabled,
     containerRef,
+    onUserScrollIntent: showScrollbar,
     resetKey,
     watch,
     suspendAutoFollow: Boolean(previousHeightRef.current) || loadingPrevious,
@@ -79,9 +115,10 @@ export function MessageScrollPanel({
     <div className={`message-scroll-shell${className ? ` ${className}` : ""}`}>
       <div
         ref={containerRef}
-        className="message-scroll-viewport"
+        className={`message-scroll-viewport${scrollbarVisible ? " message-scroll-viewport-scrolling" : ""}`}
         aria-label={ariaLabel}
         aria-busy={loading}
+        tabIndex={0}
         {...scrollHandlers}
       >
         <div className={`message-scroll-content${contentClassName ? ` ${contentClassName}` : ""}`}>

@@ -1,8 +1,9 @@
-import { RefObject, TouchEvent, WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, RefObject, TouchEvent, WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 type UseAutoFollowScrollOptions<T extends HTMLElement> = {
   enabled?: boolean;
   onScrollToTop?: () => void;
+  onUserScrollIntent?: () => void;
   suspendAutoFollow?: boolean;
   topLoadThreshold?: number;
   containerRef: RefObject<T | null>;
@@ -17,6 +18,7 @@ let watchObjectIdSeq = 0;
 export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   enabled = true,
   onScrollToTop,
+  onUserScrollIntent,
   suspendAutoFollow = false,
   topLoadThreshold = DEFAULT_TOP_LOAD_THRESHOLD,
   containerRef,
@@ -34,6 +36,8 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   const watchKey = useMemo(() => watch.map(watchIdentityKey).join("\u001f"), watch);
   const onScrollToTopRef = useRef(onScrollToTop);
   onScrollToTopRef.current = onScrollToTop;
+  const onUserScrollIntentRef = useRef(onUserScrollIntent);
+  onUserScrollIntentRef.current = onUserScrollIntent;
 
   const setFollowing = useCallback((next: boolean) => {
     followingRef.current = next;
@@ -116,6 +120,7 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
   }, [enabled, following, resetKey, scrollTail, suspendAutoFollow, watchKey]);
 
   const handleWheel = useCallback((event: WheelEvent<T>) => {
+    if (event.deltaY !== 0) onUserScrollIntentRef.current?.();
     if (event.deltaY < 0) {
       setFollowing(false);
       triggerScrollToTop();
@@ -132,11 +137,34 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
     const startY = touchStartYRef.current;
     const currentY = event.touches[0]?.clientY;
     if (startY == null || currentY == null || Math.abs(currentY - startY) <= 2) return;
+    onUserScrollIntentRef.current?.();
     if (currentY > startY) {
       setFollowing(false);
       triggerScrollToTop();
     } else {
       resumeIfAtTail();
+    }
+  }, [resumeIfAtTail, setFollowing, triggerScrollToTop]);
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<T>) => {
+    if (event.currentTarget !== event.target) return;
+    switch (event.key) {
+      case "ArrowUp":
+      case "PageUp":
+      case "Home":
+        onUserScrollIntentRef.current?.();
+        setFollowing(false);
+        triggerScrollToTop();
+        break;
+      case "ArrowDown":
+      case "PageDown":
+      case "End":
+      case " ":
+        onUserScrollIntentRef.current?.();
+        resumeIfAtTail();
+        break;
+      default:
+        break;
     }
   }, [resumeIfAtTail, setFollowing, triggerScrollToTop]);
 
@@ -146,6 +174,7 @@ export function useAutoFollowScroll<T extends HTMLElement = HTMLDivElement>({
     scrollToLatest,
     scrollHandlers: {
       onWheel: handleWheel,
+      onKeyDown: handleKeyDown,
       onTouchStart: handleTouchStart,
       onTouchMove: handleTouchMove,
     },
