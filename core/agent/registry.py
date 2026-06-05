@@ -27,11 +27,7 @@ from core.tools.sandbox import (
     execute_sync_command,
     load_skill,
 )
-from logger import get_logger
 from schema.sandbox.async_jobs import SandboxAsyncJobStatus
-
-
-logger = get_logger(__name__)
 
 
 async def _end_turn_after_async_dispatch(
@@ -80,6 +76,8 @@ class AgentRegistry:
         self._specs: dict[str, AgentSpec] = {spec.code: spec for spec in specs}
         self._codes_cache: tuple[str, ...] | None = None
         self._code_to_name_cache: dict[str, str] | None = None
+        # Reject self-mounts and circular subagent chains at boot.
+        self._validate_subagent_graph()
 
     def codes(self) -> list[str]:
         if self._codes_cache is None:
@@ -105,6 +103,22 @@ class AgentRegistry:
             raise ValueError(f"agent spec not declared for code: {agent_code}")
         return spec
 
+    def _validate_subagent_graph(self) -> None:
+        for code in self._specs:
+            self._check_subagent_chain(code, [code])
+
+    def _check_subagent_chain(self, code: str, path: list[str]) -> None:
+        spec = self._specs.get(code)
+        if spec is None:
+            return
+        for mount in spec.subagents:
+            if mount.code == code:
+                raise ValueError(f"agent {code} cannot mount itself as a subagent")
+            if mount.code in path:
+                chain = " -> ".join([*path, mount.code])
+                raise ValueError(f"circular subagent mount detected: {chain}")
+            self._check_subagent_chain(mount.code, [*path, mount.code])
+
     def _build(self, spec: AgentSpec, cfg: AgentConfig, graph: SessionAgentGraph) -> Agent:
         agent_path = WORKSPACE / "agents" / spec.code
         soul = (agent_path / "SOUL.md").read_text(encoding="utf-8").strip()
@@ -128,15 +142,8 @@ class AgentRegistry:
             mount.tool for mount in spec.tools
             if _tool_mount_available(mount, graph.tool_snapshot)
         ]
-        for mount in spec.subagents:
-            if mount.code == spec.code:
-                raise ValueError(f"agent {spec.code} cannot mount itself as a subagent")
-            child_graph = graph.child(mount.code)
-            child_graph.get(mount.code)  # eager build catches circular mounts at boot
         if spec.subagents:
-            tools.extend(
-                _build_subagent_tools(spec, graph)
-            )
+            tools.extend(_build_subagent_tools(spec, self))
 
         return Agent(
             name=cfg.name,
@@ -149,13 +156,17 @@ class AgentRegistry:
 
 
 class SessionAgentGraph:
+    """Single-owner container for an Agent and its httpx client.
+
+    Each driver (main session or one sub-agent) binds its own graph, so
+    disposing one graph never tears down a sibling's in-flight HTTP stream.
+    """
+
     def __init__(self, registry: AgentRegistry, tool_snapshot: AgentToolSnapshot) -> None:
         self._registry = registry
         self.tool_snapshot = tool_snapshot
         self._agents: dict[str, Agent] = {}
         self._models: list[Model] = []
-        self._building: set[str] = set()
-        self._children: dict[str, SessionAgentGraph] = {}
 
     def code_to_name(self) -> dict[str, str]:
         return self._registry.code_to_name()
@@ -164,40 +175,22 @@ class SessionAgentGraph:
         cached = self._agents.get(agent_code)
         if cached is not None:
             return cached
-        if agent_code in self._building:
-            raise ValueError(f"circular subagent mount detected at {agent_code}")
 
         spec = self._registry._spec(agent_code)
         cfg = get_config().agents.get(agent_code)
         if cfg is None:
             raise ValueError(f"agent config missing for code: {agent_code}")
 
-        self._building.add(agent_code)
-        try:
-            agent = self._registry._build(spec, cfg, self)
-            self._agents[agent_code] = agent
-            self._models.append(agent.model)
-            return agent
-        finally:
-            self._building.discard(agent_code)
-
-    def child(self, mount_code: str) -> "SessionAgentGraph":
-        child = self._children.get(mount_code)
-        if child is None:
-            child = SessionAgentGraph(self._registry, self.tool_snapshot)
-            child._building.update(self._building)
-            self._children[mount_code] = child
-        return child
+        agent = self._registry._build(spec, cfg, self)
+        self._agents[agent_code] = agent
+        self._models.append(agent.model)
+        return agent
 
     async def close(self) -> None:
-        for child in self._children.values():
-            await child.close()
         for model in self._models:
             await model.close()
-        self._children.clear()
         self._agents.clear()
         self._models.clear()
-        self._building.clear()
 
 
 def _has_tool(spec: AgentSpec, tool: Tool) -> bool:
@@ -220,10 +213,9 @@ def _tool_mount_available(mount: ToolMount, snapshot: AgentToolSnapshot) -> bool
     return True
 
 
-def _build_subagent_tools(spec: AgentSpec, graph: SessionAgentGraph) -> list[Tool]:
+def _build_subagent_tools(spec: AgentSpec, registry: AgentRegistry) -> list[Tool]:
     return build_subagent_tools(
         spec.code,
         (mount.code for mount in spec.subagents),
-        get_child_agent=lambda code: graph.child(code).get(code),
-        get_code_to_name=graph.code_to_name,
+        registry=registry,
     )
