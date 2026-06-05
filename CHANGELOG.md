@@ -2,6 +2,25 @@
 
 All notable changes to Z3r0 are documented in this file.
 
+## [0.1.1] - 2026-06-05
+
+### Added
+
+- Added paginated `read_subagent_task(run_id, offset)` result and error reads so large subagent outputs can be consumed in chunks.
+- Added subtle playground message scrollbars that appear during wheel, touch, and keyboard scrolling.
+
+### Changed
+
+- Kept subagent completion notifications metadata-only; parent agents now read result bodies through `read_subagent_task`.
+- Split Vite app and landing entrypoints into dedicated root/config files.
+
+### Fixed
+
+- Kept subagent streams alive across main agent graph rebinds by giving each subagent driver its own bound graph.
+- Hardened instance config refresh and agent pool rebuild handling, including restart reporting and rollback on rebuild failure.
+- Replaced frontend-only random agent row IDs with stable agent codes in system configuration editing.
+- Stored sandbox image size as `bigint`.
+
 ## [0.1.0] - 2026-06-03
 
 ### Added
