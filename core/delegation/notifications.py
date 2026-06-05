@@ -8,7 +8,11 @@ reach ``notification_prompt``.
 
 from schema.agent.events import MAX_AGENT_TEXT_INPUT_CHARS
 from schema.agent.notifications import AgentNotificationKind, AgentNotificationSnapshot
-from schema.agent.subordinates import SUBAGENT_RESUMPTION_PREVIEW_CHARS
+
+
+# Sandbox error payloads are short, but cap the inline preview defensively
+# so a long stderr never blows up the resumption prompt.
+_SANDBOX_ERROR_PREVIEW_CHARS = 1000
 
 
 def notification_prompt(notification: AgentNotificationSnapshot) -> str:
@@ -36,16 +40,14 @@ _RESUMPTION_HEADER = (
 
 
 def _subagent_finished_prompt(notification: AgentNotificationSnapshot) -> str:
+    # The notification carries metadata only; the body lives in the DB and is
+    # paged through read_subagent_task. This keeps the resumption prompt small
+    # and prevents overlap with the first slice the agent will fetch.
     payload = notification.payload
     status = str(payload.get("status") or "unknown")
     agent_code = str(payload.get("agent_code") or "")
     agent_name = str(payload.get("agent_name") or agent_code or "subagent")
     run_id = str(payload.get("run_id") or notification.run_id)
-    # Fall back to legacy full-result keys only for already-queued notifications
-    # created before payloads were narrowed to preview fields.
-    result_preview = _preview(payload.get("result_preview") or payload.get("result"))
-    error_preview = _preview(payload.get("error_preview") or payload.get("error"))
-    preview = result_preview if status == "completed" else error_preview
 
     event_lines = [
         "- kind: delegated_task_completed",
@@ -53,25 +55,16 @@ def _subagent_finished_prompt(notification: AgentNotificationSnapshot) -> str:
         f"- agent_code: {agent_code or 'unknown'}",
         f"- subagent: {agent_name}",
         f"- status: {status}",
-        "- result_ref: use read_subagent_task with the run_id for the task result snapshot; "
-        "use transcript for execution history.",
     ]
 
     sections = [
         _RESUMPTION_HEADER,
         "## Event\n\n" + "\n".join(event_lines),
-    ]
-
-    if preview:
-        heading = "## Result Preview" if status == "completed" else "## Error Preview"
-        sections.append(f"{heading}\n\n{preview}")
-
-    sections.append(
         "## Next Step\n\n"
-        "Continue from this completion event. If the preview is insufficient, call "
-        "`read_subagent_task` with the run_id before drawing conclusions. "
-        "Report to the user only when there is a useful conclusion, coordination update, or next action."
-    )
+        "Call `read_subagent_task(run_id, offset=0)` and repeat with `offset=next_offset` "
+        "until the response omits `next_offset` to read the full result/error. "
+        "Report to the user only when there is a useful conclusion, coordination update, or next action.",
+    ]
     return "\n\n".join(sections)
 
 
@@ -83,7 +76,9 @@ def _sandbox_async_job_prompt(notification: AgentNotificationSnapshot) -> str:
     output_lines = int(payload.get("output_lines") or 0)
     output_bytes = int(payload.get("output_bytes") or 0)
     exit_code = payload.get("exit_code")
-    error_preview = _preview(payload.get("error"))
+    # Sandbox errors are short free-form strings without a paginated reader,
+    # so inlining a capped preview is the only way to expose them here.
+    error_preview = _truncate_inline(payload.get("error"), _SANDBOX_ERROR_PREVIEW_CHARS)
 
     event_lines = [
         "- kind: async_command_completed",
@@ -113,11 +108,11 @@ def _sandbox_async_job_prompt(notification: AgentNotificationSnapshot) -> str:
     return "\n\n".join(sections)
 
 
-def _preview(value: object, limit: int = SUBAGENT_RESUMPTION_PREVIEW_CHARS) -> str:
+def _truncate_inline(value: object, limit: int) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    return _truncate_with_marker(text, limit, "[Preview truncated; inspect the referenced result source for more.]")
+    return _truncate_with_marker(text, limit, "[Preview truncated.]")
 
 
 def _fit_text_input(text: str) -> str:

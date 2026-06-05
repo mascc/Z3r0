@@ -65,7 +65,7 @@ async def execute_sync_command(
     timeout_seconds: int = _SYNC_COMMAND_TIMEOUT_SECONDS,
 ) -> str:
     """Execute a short sandbox command and return result metadata.
-    
+
     Args:
         command: str shell command to execute in the selected sandbox container.
         timeout_seconds: int command timeout in seconds, clamped to 1-30.

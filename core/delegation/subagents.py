@@ -40,7 +40,8 @@ from schema.agent.events import (
     ToolResultEvent,
 )
 from schema.agent.subordinates import (
-    SUBAGENT_TASK_RESULT_PREVIEW_CHARS,
+    SUBAGENT_TASK_EVENT_PREVIEW_CHARS,
+    SUBAGENT_TASK_RESULT_CHUNK_CHARS,
     AgentSubordinateTaskSnapshot,
     AgentSubordinateTaskToolItem,
     AgentSubordinateTaskToolResult,
@@ -156,19 +157,28 @@ def build_subagent_tools(
             ),
         )
 
-    async def read_subagent_task(ctx: RunContextWrapper[AgentRuntimeContext], run_id: str) -> str:
+    async def read_subagent_task(
+        ctx: RunContextWrapper[AgentRuntimeContext],
+        run_id: str,
+        offset: int = 0,
+    ) -> str:
         """Read the latest state of a subagent task in the current session.
 
         Args:
             run_id: str subagent run id returned by start_subagent_task or list_subagent_tasks.
+            offset: int starting position into the task's result/error (default 0).
+                Repeat with ``offset=next_offset`` until the response omits ``next_offset``
+                to read the full body.
 
         Returns:
-            JSON status with the task status, progress, result preview, error preview, and size metadata.
+            JSON status with the task status, progress, the requested slice of result/error,
+            total sizes (``result_chars``/``error_chars``), and ``next_offset`` (the field is
+            omitted once the body is fully read).
         """
         snapshot = await _resolve_task(ctx, run_id)
         if snapshot is None:
             return _tool_response(message="subagent task not found")
-        return _tool_response(task=snapshot)
+        return _tool_response(task=snapshot, offset=offset)
 
     async def list_subagent_tasks(ctx: RunContextWrapper[AgentRuntimeContext], limit: int = 20) -> str:
         """List recent subagent tasks visible to the current session user.
@@ -218,9 +228,10 @@ def build_subagent_tools(
             read_subagent_task,
             name_override="read_subagent_task",
             description_override=(
-                "Read the latest state for a subagent task. Args: run_id is the persistent subagent run id. "
-                "Returns status, progress, preview fields, and result/error sizes. "
-                "Use transcript for execution history."
+                "Read a subagent task in the current session. Args: run_id is the persistent subagent "
+                "run id; offset (default 0) is the starting position into result/error. Returns status, "
+                "progress, the requested slice of result/error, total sizes (result_chars/error_chars), "
+                "and next_offset; repeat with offset=next_offset until the response omits next_offset."
             ),
         ),
         function_tool(
@@ -256,10 +267,12 @@ def _tool_response(
     task: AgentSubordinateTaskSnapshot | None = None,
     tasks: list[AgentSubordinateTaskSnapshot] | None = None,
     message: str = "",
+    *,
+    offset: int = 0,
 ) -> str:
     return AgentSubordinateTaskToolResult(
-        task=_task_tool_item(task, include_preview=True),
-        tasks=[_task_tool_item(item, include_preview=False) for item in tasks or []],
+        task=_task_tool_item(task, offset=offset, include_body=True),
+        tasks=[_task_tool_item(item, include_body=False) for item in tasks or []],
         message=message,
     ).model_dump_json(
         exclude_none=True,
@@ -270,36 +283,50 @@ def _tool_response(
 def _task_tool_item(
     snapshot: AgentSubordinateTaskSnapshot | None,
     *,
-    include_preview: bool,
+    offset: int = 0,
+    include_body: bool,
 ) -> AgentSubordinateTaskToolItem | None:
     if snapshot is None:
         return None
-    result_preview, result_truncated = (
-        _tool_preview(snapshot.result) if include_preview else ("", bool(snapshot.result))
-    )
-    error_preview, error_truncated = (
-        _tool_preview(snapshot.error) if include_preview else ("", bool(snapshot.error))
-    )
+    if include_body:
+        # Result and error are mutually exclusive across terminal statuses, so a
+        # single offset / next_offset pointer is unambiguous.
+        result, result_next = _slice_chunk(snapshot.result, offset)
+        error, error_next = _slice_chunk(snapshot.error, offset)
+        next_offset = result_next if result_next is not None else error_next
+    else:
+        result, error, next_offset = "", "", None
     return AgentSubordinateTaskToolItem(
         run_id=snapshot.run_id,
         agent_code=snapshot.agent_code,
         agent_name=snapshot.agent_name,
         status=snapshot.status,
-        result_preview=result_preview,
-        error_preview=error_preview,
+        result=result,
+        error=error,
         result_chars=len(snapshot.result),
         error_chars=len(snapshot.error),
-        truncated=result_truncated or error_truncated,
+        next_offset=next_offset,
         progress=snapshot.progress,
     )
 
 
-def _tool_preview(value: str) -> tuple[str, bool]:
-    if len(value) <= SUBAGENT_TASK_RESULT_PREVIEW_CHARS:
+def _slice_chunk(value: str, offset: int) -> tuple[str, int | None]:
+    """Return a fixed-size chunk starting at ``offset`` and the next pagination offset.
+
+    ``next_offset`` is ``None`` once the value is fully consumed (EOF or empty body).
+    """
+    start = max(offset, 0)
+    if start >= len(value):
+        return "", None
+    end = min(start + SUBAGENT_TASK_RESULT_CHUNK_CHARS, len(value))
+    return value[start:end], end if end < len(value) else None
+
+
+def _event_preview(value: str) -> tuple[str, bool]:
+    """UI-event preview: short slice + ``truncated`` flag for the frontend timeline."""
+    if len(value) <= SUBAGENT_TASK_EVENT_PREVIEW_CHARS:
         return value, False
-    marker = "\n\n[Preview truncated; inspect transcript for execution history.]"
-    body_limit = max(1, SUBAGENT_TASK_RESULT_PREVIEW_CHARS - len(marker))
-    return value[:body_limit].rstrip() + marker, True
+    return value[:SUBAGENT_TASK_EVENT_PREVIEW_CHARS], True
 
 
 def _log_subagent_start_result(task: asyncio.Task[AgentSubordinateTaskSnapshot]) -> None:
@@ -759,8 +786,8 @@ def _progress_from_event(event: AgentEventSchema) -> str:
 
 
 def _task_event(snapshot: AgentSubordinateTaskSnapshot) -> AgentEventSchema:
-    result_preview, result_truncated = _tool_preview(snapshot.result)
-    error_preview, error_truncated = _tool_preview(snapshot.error)
+    result_preview, result_truncated = _event_preview(snapshot.result)
+    error_preview, error_truncated = _event_preview(snapshot.error)
     return SubagentTaskEvent(
         created_at=snapshot.updated_at,
         agent_name=snapshot.agent_name,

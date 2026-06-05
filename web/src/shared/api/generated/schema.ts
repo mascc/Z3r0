@@ -890,38 +890,38 @@ export interface components {
              */
             agent_name: string;
             /**
+             * Error
+             * @default
+             */
+            error: string;
+            /**
              * Error Chars
              * @default 0
              */
             error_chars: number;
             /**
-             * Error Preview
-             * @default
+             * Next Offset
+             * @default null
              */
-            error_preview: string;
+            next_offset: number | null;
             /**
              * Progress
              * @default
              */
             progress: string;
             /**
+             * Result
+             * @default
+             */
+            result: string;
+            /**
              * Result Chars
              * @default 0
              */
             result_chars: number;
-            /**
-             * Result Preview
-             * @default
-             */
-            result_preview: string;
             /** Run Id */
             run_id: string;
             status: components["schemas"]["AgentSubordinateStatus"];
-            /**
-             * Truncated
-             * @default false
-             */
-            truncated: boolean;
         };
         /** AgentSubordinateTaskToolResult */
         AgentSubordinateTaskToolResult: {
